@@ -36,6 +36,20 @@ func apiGet(t *testing.T, srv *Server, path string) *httptest.ResponseRecorder {
 	return rec
 }
 
+// TestServerBootServesAuthEndpoints verifies the auth/session endpoints are
+// mounted (not 501 stubs) on the running server. An unauthenticated GET to
+// /api/v1/auth/session must be 401 (authn enforced), not 501 (stub).
+func TestServerBootServesAuthEndpoints(t *testing.T) {
+	srv := apiSrv(t, "test")
+	rec := apiGet(t, srv, "/api/v1/auth/session")
+	if rec.Code == http.StatusNotImplemented {
+		t.Fatalf("GET /api/v1/auth/session = 501 (stub not wired); want authn-enforced 401")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/v1/auth/session = %d, want 401 (unauthenticated)", rec.Code)
+	}
+}
+
 // TestServerBootServesAPIHealth verifies the server boots and serves
 // /api/v1/health with a 200.
 func TestServerBootServesAPIHealth(t *testing.T) {

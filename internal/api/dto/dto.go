@@ -44,6 +44,17 @@ type Session struct {
 	IPHash        string     `json:"ip_hash"`
 }
 
+// Principal is the authenticated identity returned by GET /auth/session. It
+// mirrors the middleware.Principal plus onboarding state (ToSAccepted).
+type Principal struct {
+	UserID      string   `json:"user_id"`
+	TenantID    string   `json:"tenant_id"`
+	Scopes      []string `json:"scopes"`
+	IsAdmin     bool     `json:"is_admin"`
+	IsCookie    bool     `json:"is_cookie"`
+	ToSAccepted bool     `json:"tos_accepted"`
+}
+
 // PublicKey is a stored SSH or PGP public key. KeyMaterial holds the public
 // key body; a private key is never exposed.
 type PublicKey struct {

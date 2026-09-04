@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -125,11 +126,14 @@ func replay(w http.ResponseWriter, s *storedResponse) {
 }
 
 // idempotencyHash binds the key to the request so the same key on a different
-// request is not confused. It hashes key + method + path + body.
+// request is not confused. It hashes key + method + path + body. The body is
+// restored after reading so downstream handlers can still consume it.
 func idempotencyHash(key string, r *http.Request) string {
 	var body []byte
 	if r.Body != nil {
 		body, _ = readAll(r.Body)
+		// Restore the body for the real handler (idempotency only peeks).
+		r.Body = io.NopCloser(bytes.NewReader(body))
 	}
 	h := sha256.New()
 	h.Write([]byte(key))

@@ -210,6 +210,30 @@ paths:
                 $ref: "#/components/schemas/Session"
         "400":
           $ref: "#/components/responses/Problem"
+  /invite/{token}:
+    get:
+      operationId: inviteBrowser
+      summary: Redeem a magic-link token into a session cookie and redirect to the panel (anonymous)
+      description: >
+        Anonymous browser entry point (M1). Redeems the one-time invite token,
+        creates a NEW server-side session, sets the opaque session cookie, and
+        303-redirects to /panel. The token is single-use and persisted only as a
+        hash; token-in-URL Referer/access-log leaks are acknowledged under the
+        project's PII discipline.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Session cookie set; redirect to /panel
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:

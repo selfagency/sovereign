@@ -16,6 +16,7 @@ import (
 	"github.com/selfagency/sovereign/internal/api"
 	"github.com/selfagency/sovereign/internal/api/dto"
 	"github.com/selfagency/sovereign/internal/api/middleware"
+	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/endpoints"
@@ -323,7 +324,7 @@ func (s *Server) buildRouter() error {
 		// Control-plane REST API (/api/v1), mounted on the identity host. It
 		// shares the host with the OIDC provider at "/"; the distinct /api/v1
 		// prefix keeps the two surfaces from colliding.
-		apiHandler, err := s.apiHandler()
+		apiHandler, err := s.apiHandler(waHandler)
 		if err != nil {
 			return fmt.Errorf("api handler: %w", err)
 		}
@@ -361,7 +362,7 @@ func (h hostRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // dependencies (capabilities, version, ping) and wires the middleware chain
 // config from the server config. The returned lifecycle is stored so Close
 // stops its background goroutines.
-func (s *Server) apiHandler() (http.Handler, error) {
+func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, error) {
 	// The honest wired-feature list: authn/identity plumbing is live; data-plane
 	// features stay false until their wiring lands in Phase 3/4.
 	capabilities := dto.Capabilities{
@@ -383,7 +384,9 @@ func (s *Server) apiHandler() (http.Handler, error) {
 		meta.WithPing(ping),
 	)
 
-	routes := api.ToRouteInfo(api.RoutesFor(h))
+	ah := v1auth.New(s.store, s.authStore.SigningKeyMaterial(), "https://id."+s.cfg.Domain, waHandler, s.logger)
+
+	routes := api.ToRouteInfo(api.RoutesForAPI(h, ah))
 	life := middleware.NewHandler(&middleware.ChainConfig{
 		Routes:        routes,
 		Logger:        s.logger,

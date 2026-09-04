@@ -103,9 +103,18 @@ func (a *AuthN) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// authenticateBearer validates a JWT bearer token against the API audience and
-// resolves the user row for the principal's tenant and admin flag.
+// authenticateBearer validates a bearer credential. It accepts BOTH a legacy
+// JWT access token (validated against the API audience) and an opaque
+// server-side session token (resolved against the session store), so a token
+// returned by the programmatic invite-redeem flow can be used as a Bearer
+// credential. The credential is format-sniffed via store.IsSessionToken.
 func (a *AuthN) authenticateBearer(r *http.Request, token string) (*Principal, error) {
+	if store.IsSessionToken(token) {
+		// Opaque session token as Bearer: resolve against the session store.
+		// The principal is non-cookie, so refresh/delete (cookie-only) and CSRF
+		// do not apply to it.
+		return a.principalFromSession(r, token, false)
+	}
 	claims, err := auth.ValidateAccessToken(a.Key, token, a.Issuer, apiAudience)
 	if err != nil {
 		return nil, errUnauth
@@ -144,15 +153,18 @@ func (a *AuthN) authenticateCookie(r *http.Request) (*Principal, error) {
 		}
 		return a.principalFromSubject(r, claims.Subject, claims.Scopes, true)
 	case opaqueVal != "":
-		return a.principalFromSession(r, opaqueVal)
+		return a.principalFromSession(r, opaqueVal, true)
 	default:
 		return nil, errUnauth
 	}
 }
 
 // principalFromSession resolves an opaque session token to its row, checks
-// expiry/revocation, and builds the principal.
-func (a *AuthN) principalFromSession(r *http.Request, token string) (*Principal, error) {
+// expiry/revocation, and builds the principal. isCookie distinguishes a
+// browser (cookie) principal from a programmatic (bearer) one: a cookie
+// session is granted self/admin scopes AND is subject to CSRF + refresh/delete;
+// a bearer session is granted the same scopes but is not cookie-authenticated.
+func (a *AuthN) principalFromSession(r *http.Request, token string, isCookie bool) (*Principal, error) {
 	if a.Sessions == nil {
 		return nil, errUnauth
 	}
@@ -163,7 +175,27 @@ func (a *AuthN) principalFromSession(r *http.Request, token string) (*Principal,
 	if sess.IsExpired() || sess.RevokedAt != nil {
 		return nil, errUnauth
 	}
-	return a.principalFromSubject(r, sess.UserID, nil, true)
+	if a.Users == nil {
+		return nil, errUnauth
+	}
+	u, err := a.Users.UserByID(r.Context(), sess.UserID)
+	if err != nil {
+		return nil, errUnauth
+	}
+	// A session token always represents a logged-in user, so it carries the
+	// self scopes (plus admin scopes when the user is an instance admin),
+	// regardless of whether it arrived via cookie or bearer.
+	scopes := selfScopes
+	if u.IsAdmin {
+		scopes = append(append([]string{}, adminScopes...), selfScopes...)
+	}
+	return &Principal{
+		UserID:   u.ID,
+		TenantID: u.TenantID,
+		Scopes:   scopes,
+		IsAdmin:  u.IsAdmin,
+		IsCookie: isCookie,
+	}, nil
 }
 
 // principalFromSubject loads the user row to derive tenant ID and admin flag.
