@@ -365,7 +365,7 @@ tasks:
     description: "Implement internal/api/problem package: RFC 9457 application/problem+json type + mapper. Stable problem URIs under https://<domain>/problems/: invalid-request, validation-failed, unauthenticated, insufficient-scope, forbidden, not-found, conflict, precondition-required, precondition-failed, payload-too-large, rate-limited, not-implemented, internal."
     wave: 5
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [D-3, problem-details, errors]
     dependencies: []
@@ -392,7 +392,7 @@ tasks:
     description: "Implement internal/api/dto package: typed DTOs (snake_case JSON, RFC 3339 Z timestamps). Admin lists use {data,offset,limit,total}; audit log uses {data,next_cursor} (opaque cursor = base64(sort_key,id)). No map[string]any in any response."
     wave: 5
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [G, dto, typing, C4]
     dependencies: []
@@ -420,7 +420,7 @@ tasks:
     description: "Hand-write openapi/sovereign.v1.yaml (source of truth, D-5). Add kin-openapi test-only dep. Bidirectional drift test: route-set <-> spec parity both directions; must fail on a deliberately-omitted route."
     wave: 5
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [D-5, openapi, contract]
     dependencies: []
