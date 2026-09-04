@@ -448,7 +448,7 @@ tasks:
     description: "Implement internal/api/router.go route table using stdlib net/http.ServeMux Go 1.22+ patterns (D-2). Every route declares its required scope AND its per-route timeout in the route table. No router dependency."
     wave: 6
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [D-2, routing, route-table, M4]
     dependencies: [T1.1, T1.2]
@@ -476,7 +476,7 @@ tasks:
     description: "Implement full middleware chain: request-id -> panic-recover -> body-limit -> per-route timeout (route-table column; backup run/restore declared long-running) -> CORS (api.cors_origins allowlist) -> rate-limit (per-IP only) -> authn (bearer XOR cookie, audience-checked; dual-read format-sniffed, both formats -> 400) -> CSRF (cookie principals, unsafe methods; hidden csrf_token field for form-encoded no-JS POSTs) -> scope authz (table-driven, coarse scopes) -> conditional-request (ETag on GET only; no mandatory If-Match) -> idempotency (invite + backup run/restore) -> handler -> problem+json mapper -> access log. Bearer+cookie together -> 400."
     wave: 6
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [D-6, middleware, authn, authz, security, M4, M6, C2, C3, C5, C6, R2]
     dependencies: [T0.3, T0.4, T0.7]

@@ -117,7 +117,6 @@ func newAuthN(t *testing.T, s *store.Store, key *rsa.PrivateKey, dualRead bool) 
 		Sessions:      s,
 		Users:         s,
 		DualRead:      dualRead,
-		RequireAuth:   func(string) bool { return true },
 	}
 }
 
@@ -199,32 +198,6 @@ func TestAuthNNoCredential(t *testing.T) {
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/x", http.NoBody))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rec.Code)
-	}
-}
-
-// TestAuthNAnonymousSkips verifies an anonymous route skips authn entirely.
-func TestAuthNAnonymousSkips(t *testing.T) {
-	key := testSigningKey(t)
-	s := newTestStore(t)
-	a := newAuthN(t, s, key, true)
-	a.RequireAuth = func(path string) bool { return path != "/api/v1/health" }
-
-	called := false
-	h := a.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		called = true
-		w.WriteHeader(http.StatusOK)
-	}))
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/health", http.NoBody)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
-	if !called {
-		t.Fatal("anonymous handler should run")
-	}
-	if PrincipalFromContext(req.Context()) != nil {
-		t.Fatal("anonymous route should have no principal")
 	}
 }
 

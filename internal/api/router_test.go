@@ -53,20 +53,21 @@ func TestEveryRouteHasTimeout(t *testing.T) {
 }
 
 // TestRouterRegistersMethods asserts New() mounts each route with the correct
-// Go 1.22+ method pattern: a registered path returns the 501 stub, and an
-// unknown path returns 404.
+// Go 1.22+ method pattern: a registered GET route returns its real handler
+// (200 for the now-implemented capabilities route), a not-yet-implemented
+// route returns the 501 stub, and an unknown path returns 404.
 func TestRouterRegistersMethods(t *testing.T) {
 	mux := New(Routes())
 
-	// Registered GET route -> 501 stub.
+	// Registered, implemented GET route -> 200.
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/meta/capabilities", http.NoBody)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusNotImplemented {
-		t.Fatalf("GET /api/v1/meta/capabilities: got %d, want 501", rec.Code)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /api/v1/meta/capabilities: got %d, want 200", rec.Code)
 	}
 
-	// Registered POST route -> 501 stub.
+	// Registered, not-yet-implemented POST route -> 501 stub.
 	req = httptest.NewRequest(http.MethodPost, "/api/v1/auth/session/refresh", http.NoBody)
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)

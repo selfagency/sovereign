@@ -164,6 +164,22 @@ type Capabilities struct {
 	OIDC     bool `json:"oidc"`
 }
 
+// Version reports the build version of the running server.
+//
+// Commit and GoVersion are omitted (empty) when the build was not stamped
+// with them via ldflags.
+type Version struct {
+	Version   string `json:"version"`
+	Commit    string `json:"commit,omitempty"`
+	GoVersion string `json:"go_version,omitempty"`
+}
+
+// Health is the body of the /health and /ready probes. Status is "ok" or
+// "degraded".
+type Health struct {
+	Status string `json:"status"`
+}
+
 // Error is an RFC 9457 Problem Details envelope for error responses.
 type Error struct {
 	Type     string `json:"type"`

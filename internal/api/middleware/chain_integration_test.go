@@ -16,14 +16,16 @@ import (
 )
 
 // chainTestConfig builds a ChainConfig wired to a real store and a fresh key.
+// Each route carries a handler that writes 200.
 func chainTestConfig(t *testing.T, s *store.Store, key *rsa.PrivateKey) *ChainConfig {
 	t.Helper()
+	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
 	return &ChainConfig{
 		Routes: []RouteInfo{
-			{Method: http.MethodGet, Path: "/api/v1/health", Anonymous: true, Timeout: 5 * time.Second},
-			{Method: http.MethodGet, Path: "/api/v1/me", Scope: "self:read", Timeout: 5 * time.Second},
-			{Method: http.MethodPost, Path: "/api/v1/auth/invite/redeem", Anonymous: true, Idempotent: true, Timeout: 5 * time.Second},
-			{Method: http.MethodPost, Path: "/api/v1/backups/restore", Scope: "admin:backup", LongRunning: true, Timeout: 0},
+			{Method: http.MethodGet, Path: "/api/v1/health", Anonymous: true, Timeout: 5 * time.Second, Handler: http.HandlerFunc(ok)},
+			{Method: http.MethodGet, Path: "/api/v1/me", Scope: "self:read", Timeout: 5 * time.Second, Handler: http.HandlerFunc(ok)},
+			{Method: http.MethodPost, Path: "/api/v1/auth/invite/redeem", Anonymous: true, Idempotent: true, Timeout: 5 * time.Second, Handler: http.HandlerFunc(ok)},
+			{Method: http.MethodPost, Path: "/api/v1/backups/restore", Scope: "admin:backup", LongRunning: true, Timeout: 0, Handler: http.HandlerFunc(ok)},
 		},
 		Logger:        slog.New(slog.NewTextHandler(io.Discard, nil)),
 		SigningKey:    key,
@@ -40,11 +42,7 @@ func chainTestConfig(t *testing.T, s *store.Store, key *rsa.PrivateKey) *ChainCo
 func TestNewHandlerAnonymousRoute(t *testing.T) {
 	key := testSigningKey(t)
 	s := newTestStore(t)
-	mux := http.NewServeMux()
-	mux.HandleFunc(http.MethodGet+" /api/v1/health", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	life := NewHandler(mux, chainTestConfig(t, s, key))
+	life := NewHandler(chainTestConfig(t, s, key))
 	defer life.Close()
 
 	rec := httptest.NewRecorder()
@@ -62,11 +60,7 @@ func TestNewHandlerAnonymousRoute(t *testing.T) {
 func TestNewHandlerAuthRequiredRoute(t *testing.T) {
 	key := testSigningKey(t)
 	s := newTestStore(t)
-	mux := http.NewServeMux()
-	mux.HandleFunc(http.MethodGet+" /api/v1/me", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
-	life := NewHandler(mux, chainTestConfig(t, s, key))
+	life := NewHandler(chainTestConfig(t, s, key))
 	defer life.Close()
 
 	rec := httptest.NewRecorder()
@@ -86,13 +80,14 @@ func TestNewHandlerScopedPass(t *testing.T) {
 	s := newTestStore(t)
 	u := createTestUser(t, s, false)
 	tok := mintAPIJWT(t, key, u.ID, []string{"self:read"}, apiAudience)
-	mux := http.NewServeMux()
+
 	reached := false
-	mux.HandleFunc(http.MethodGet+" /api/v1/me", func(w http.ResponseWriter, _ *http.Request) {
+	cfg := chainTestConfig(t, s, key)
+	cfg.Routes[1].Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		reached = true
 		w.WriteHeader(http.StatusOK)
 	})
-	life := NewHandler(mux, chainTestConfig(t, s, key))
+	life := NewHandler(cfg)
 	defer life.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/me", http.NoBody)
@@ -112,15 +107,13 @@ func TestNewHandlerCSRFFormEncodedNoJS(t *testing.T) {
 	u := createTestUser(t, s, false)
 	tok := mintAPIJWT(t, key, u.ID, []string{"self"}, apiAudience)
 
-	mux := http.NewServeMux()
 	reached := false
-	mux.HandleFunc(http.MethodPost+" /api/v1/session/refresh", func(w http.ResponseWriter, _ *http.Request) {
+	cfg := chainTestConfig(t, s, key)
+	cfg.Routes = append(cfg.Routes, RouteInfo{Method: http.MethodPost, Path: "/api/v1/session/refresh", Anonymous: true, Timeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		reached = true
 		w.WriteHeader(http.StatusOK)
-	})
-	cfg := chainTestConfig(t, s, key)
-	cfg.Routes = append(cfg.Routes, RouteInfo{Method: http.MethodPost, Path: "/api/v1/session/refresh", Anonymous: true, Timeout: 5 * time.Second})
-	life := NewHandler(mux, cfg)
+	})})
+	life := NewHandler(cfg)
 	defer life.Close()
 
 	// Set a CSRF token cookie + a matching session cookie.
@@ -149,13 +142,11 @@ func TestNewHandlerCrossOriginUnsafeCSRFRejected(t *testing.T) {
 	u := createTestUser(t, s, false)
 	tok := mintAPIJWT(t, key, u.ID, []string{"self"}, apiAudience)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(http.MethodPost+" /api/v1/session/refresh", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
 	cfg := chainTestConfig(t, s, key)
-	cfg.Routes = append(cfg.Routes, RouteInfo{Method: http.MethodPost, Path: "/api/v1/session/refresh", Anonymous: true, Timeout: 5 * time.Second})
-	life := NewHandler(mux, cfg)
+	cfg.Routes = append(cfg.Routes, RouteInfo{Method: http.MethodPost, Path: "/api/v1/session/refresh", Anonymous: true, Timeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})})
+	life := NewHandler(cfg)
 	defer life.Close()
 
 	csrfTok, _ := NewToken()
@@ -181,21 +172,18 @@ func TestNewHandlerSlowRestoreNotKilled(t *testing.T) {
 	u := createTestUser(t, s, true)
 	tok := mintAPIJWT(t, key, u.ID, []string{"admin:backup"}, apiAudience)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(http.MethodPost+" /api/v1/backups/restore", func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(120 * time.Millisecond) // long-running: must not be killed
-		w.WriteHeader(http.StatusOK)
-	})
-	mux.HandleFunc(http.MethodPost+" /api/v1/backups/run", func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(200 * time.Millisecond) // exceeds the 50ms normal budget: must be killed
-		w.WriteHeader(http.StatusOK)
-	})
 	cfg := chainTestConfig(t, s, key)
 	cfg.Routes = []RouteInfo{
-		{Method: http.MethodPost, Path: "/api/v1/backups/restore", Scope: "admin:backup", LongRunning: true, Timeout: 0},
-		{Method: http.MethodPost, Path: "/api/v1/backups/run", Scope: "admin:backup", Timeout: 50 * time.Millisecond},
+		{Method: http.MethodPost, Path: "/api/v1/backups/restore", Scope: "admin:backup", LongRunning: true, Timeout: 0, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(120 * time.Millisecond) // long-running: must not be killed
+			w.WriteHeader(http.StatusOK)
+		})},
+		{Method: http.MethodPost, Path: "/api/v1/backups/run", Scope: "admin:backup", Timeout: 50 * time.Millisecond, Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			time.Sleep(200 * time.Millisecond) // exceeds the 50ms normal budget: must be killed
+			w.WriteHeader(http.StatusOK)
+		})},
 	}
-	life := NewHandler(mux, cfg)
+	life := NewHandler(cfg)
 	defer life.Close()
 
 	// Long-running route: slow handler completes.
@@ -233,14 +221,14 @@ func TestNewHandlerSlowRestoreNotKilled(t *testing.T) {
 func TestNewHandlerIdempotencyReplay(t *testing.T) {
 	key := testSigningKey(t)
 	s := newTestStore(t)
-	mux := http.NewServeMux()
 	calls := 0
-	mux.HandleFunc(http.MethodPost+" /api/v1/auth/invite/redeem", func(w http.ResponseWriter, _ *http.Request) {
+	cfg := chainTestConfig(t, s, key)
+	cfg.Routes[2].Handler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls++
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("redeemed"))
 	})
-	life := NewHandler(mux, chainTestConfig(t, s, key))
+	life := NewHandler(cfg)
 	defer life.Close()
 
 	do := func() *httptest.ResponseRecorder {

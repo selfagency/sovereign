@@ -210,6 +210,19 @@ func TestToSDocumentGolden(t *testing.T) {
 	}, `{"id":"tos_1","version":"2026-01-01","content":"Terms...","published_at":"2026-01-02T03:04:05Z","published_by":"admin_1"}`)
 }
 
+func TestVersionGolden(t *testing.T) {
+	golden(t, "Version full", Version{Version: "v1.2.3", Commit: "c172cf2", GoVersion: "go1.27"},
+		`{"version":"v1.2.3","commit":"c172cf2","go_version":"go1.27"}`)
+
+	golden(t, "Version minimal", Version{Version: "dev"},
+		`{"version":"dev"}`)
+}
+
+func TestHealthGolden(t *testing.T) {
+	golden(t, "Health ok", Health{Status: "ok"}, `{"status":"ok"}`)
+	golden(t, "Health degraded", Health{Status: "degraded"}, `{"status":"degraded"}`)
+}
+
 func TestCapabilitiesGolden(t *testing.T) {
 	golden(t, "Capabilities", Capabilities{
 		Backup:   true,

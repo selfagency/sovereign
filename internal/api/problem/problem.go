@@ -122,6 +122,11 @@ func NotImplemented() *Problem {
 	return newProblem("not-implemented", "Not Implemented", http.StatusNotImplemented)
 }
 
+// ServiceUnavailable reports a dependency failure during readiness (503).
+func ServiceUnavailable() *Problem {
+	return newProblem("service-unavailable", "Service Unavailable", http.StatusServiceUnavailable)
+}
+
 // Internal reports an unexpected server failure (500).
 func Internal() *Problem {
 	return newProblem("internal", "Internal Server Error", http.StatusInternalServerError)

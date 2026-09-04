@@ -18,10 +18,18 @@ const (
 	apiAudience = "sovereign-api"
 )
 
-// cookieSessionScopes are the coarse scopes granted to a cookie (browser)
+// selfScopes are the coarse self-service scopes granted to a cookie (browser)
 // principal. Session rows carry no scopes, so a cookie principal is granted
-// this self-service baseline; admin routes additionally require IsAdmin.
-var cookieSessionScopes = []string{"self"}
+// this baseline; admin routes additionally require IsAdmin.
+var selfScopes = []string{"self", "profile", "keys", "proofs", "sessions", "tokens", "export", "account"}
+
+// adminScopes are the coarse admin scopes granted to a cookie principal whose
+// user record has IsAdmin=true. They mirror the admin:* coarse scopes the
+// scope-authz middleware enforces on admin routes.
+var adminScopes = []string{
+	"admin:tenants", "admin:users", "admin:clients", "admin:backup",
+	"admin:moderation", "admin:audit", "admin:ipfs", "admin:system",
+}
 
 // SessionStore resolves an opaque session token hash to its row. It is
 // implemented by *store.Store; an interface keeps the authn tests hermetic.
@@ -45,15 +53,16 @@ type UserStore interface {
 //
 // A request carrying both a bearer header AND a session cookie is rejected
 // (400), as is a cookie that somehow carries both the JWT and opaque shapes.
-// Anonymous routes (RequireAuth returns false) skip authentication entirely.
+// The caller decides which routes need authentication: NewHandler wraps only
+// non-anonymous route handlers with this middleware, so the authn decision is
+// bound to the handler, not a path lookup.
 type AuthN struct {
 	Key           *rsa.PrivateKey // signing key for JWT validation
 	Issuer        string          // identity issuer (https://id.<domain>)
 	SessionCookie string          // cookie name (the shared "session")
 	Sessions      SessionStore
 	Users         UserStore
-	DualRead      bool              // accept both JWT cookies and session rows
-	RequireAuth   func(string) bool // reports whether a path needs authn
+	DualRead      bool // accept both JWT cookies and session rows
 }
 
 var (
@@ -64,12 +73,6 @@ var (
 // Middleware returns the authentication handler.
 func (a *AuthN) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Anonymous routes skip authn entirely.
-		if a.RequireAuth != nil && !a.RequireAuth(r.URL.Path) {
-			next.ServeHTTP(w, r)
-			return
-		}
-
 		bearer := bearerToken(r.Header.Get("Authorization"))
 		hasCookie := hasCookie(r, a.SessionCookie)
 		if bearer != "" && hasCookie {
@@ -160,10 +163,14 @@ func (a *AuthN) principalFromSession(r *http.Request, token string) (*Principal,
 	if sess.IsExpired() || sess.RevokedAt != nil {
 		return nil, errUnauth
 	}
-	return a.principalFromSubject(r, sess.UserID, cookieSessionScopes, true)
+	return a.principalFromSubject(r, sess.UserID, nil, true)
 }
 
 // principalFromSubject loads the user row to derive tenant ID and admin flag.
+// For a cookie principal the scopes are derived from the user record (admin
+// gets the admin:* coarse scopes plus the self scopes; a non-admin gets only
+// the self scopes), so a cookie-authenticated admin can reach admin:* routes.
+// A bearer principal keeps whatever scopes its token granted.
 func (a *AuthN) principalFromSubject(r *http.Request, userID string, scopes []string, isCookie bool) (*Principal, error) {
 	if a.Users == nil {
 		return nil, errUnauth
@@ -171,6 +178,12 @@ func (a *AuthN) principalFromSubject(r *http.Request, userID string, scopes []st
 	u, err := a.Users.UserByID(r.Context(), userID)
 	if err != nil {
 		return nil, errUnauth
+	}
+	if isCookie {
+		scopes = selfScopes
+		if u.IsAdmin {
+			scopes = append(append([]string{}, adminScopes...), selfScopes...)
+		}
 	}
 	return &Principal{
 		UserID:   u.ID,
@@ -190,10 +203,12 @@ func bearerToken(authz string) string {
 	return ""
 }
 
-// hasCookie reports whether a request carries the named session cookie.
+// hasCookie reports whether a request carries the named session cookie with a
+// non-empty value. An empty/expired cookie value is treated as absent so a
+// valid bearer credential is not rejected by a stale empty session cookie.
 func hasCookie(r *http.Request, name string) bool {
 	for _, c := range r.Cookies() {
-		if c.Name == name {
+		if c.Name == name && c.Value != "" {
 			return true
 		}
 	}

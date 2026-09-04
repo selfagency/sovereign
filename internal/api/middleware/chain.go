@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"crypto/rsa"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -22,6 +23,10 @@ func Chain(middlewares ...func(http.Handler) http.Handler) func(http.Handler) ht
 // RouteInfo is the per-route metadata the chain needs. It mirrors the fields
 // of api.Route that drive middleware behavior; the server package adapts
 // api.Route here (avoiding an import cycle, since api imports middleware).
+// Handler is the route's HTTP handler; NewHandler wraps it with the per-route
+// authn/scope/timeout/idempotency middleware at registration time, so the
+// authn and scope decisions are bound to the exact handler ServeMux would
+// invoke (never a path lookup).
 type RouteInfo struct {
 	Method      string
 	Path        string
@@ -30,6 +35,7 @@ type RouteInfo struct {
 	Anonymous   bool
 	LongRunning bool
 	Idempotent  bool
+	Handler     http.Handler
 }
 
 // ChainConfig carries the dependencies NewHandler needs to build the chain.
@@ -47,17 +53,32 @@ type ChainConfig struct {
 	BodyLimit     int64
 }
 
-// NewHandler applies the full middleware chain in the documented fixed order
-// around the given API mux. Middleware order (outermost first):
+// NewHandler builds the API mux from cfg.Routes, wrapping each route's handler
+// with its per-route middleware (timeout, authn, scope authz, idempotency,
+// access log) at registration time, then wraps the whole mux with the shared
+// chain. Binding authn/scope to the handler (rather than a path lookup) closes
+// the path-mismatch bypass: a request ServeMux routes to a protected handler
+// can never skip authn or scope authz, regardless of trailing slashes, subtree
+// matches, or path cleaning.
 //
-//	request-id -> panic-recover -> body-limit -> per-route timeout -> CORS ->
-//	rate-limit -> authn -> CSRF -> scope authz -> conditional-request ->
-//	idempotency -> problem+json mapper -> access log -> [mux handler]
+// Middleware order (outermost first):
+//
+//	request-id -> panic-recover -> body-limit -> CORS -> rate-limit -> CSRF ->
+//	conditional-request -> problem+json mapper -> [mux]
+//	  per-route (innermost, closest to handler): timeout -> authn -> scope ->
+//	  idempotency -> access log -> [handler]
 //
 // T1.10 mounts the returned handler into the server.
-func NewHandler(mux *http.ServeMux, cfg *ChainConfig) *lifecycle {
-	routeByPath := indexRoutes(cfg.Routes)
-	timeoutByRoute := indexRoutesByMethodPath(cfg.Routes)
+func NewHandler(cfg *ChainConfig) *lifecycle {
+	// Validate the route table: every non-anonymous route must declare a
+	// scope. A route with Anonymous:false and Scope:"" is a forgotten
+	// declaration that would otherwise pass authn but skip scope authz,
+	// letting any authenticated user through.
+	for _, r := range cfg.Routes {
+		if !r.Anonymous && r.Scope == "" {
+			panic(fmt.Sprintf("middleware: route %s %s has no scope and is not marked anonymous", r.Method, r.Path))
+		}
+	}
 
 	authn := &AuthN{
 		Key:           cfg.SigningKey,
@@ -66,18 +87,6 @@ func NewHandler(mux *http.ServeMux, cfg *ChainConfig) *lifecycle {
 		Sessions:      cfg.Sessions,
 		Users:         cfg.Users,
 		DualRead:      cfg.DualRead,
-		RequireAuth: func(path string) bool {
-			r, ok := routeByPath[path]
-			return ok && !r.Anonymous
-		},
-	}
-	scopeAuthz := &ScopeAuthz{
-		RequireScope: func(path string) string {
-			if r, ok := routeByPath[path]; ok {
-				return r.Scope
-			}
-			return ""
-		},
 	}
 	csrf := &CSRF{IsCookiePrincipal: func(r *http.Request) bool {
 		// A cookie principal is either authenticated-by-cookie OR simply carries
@@ -89,27 +98,42 @@ func NewHandler(mux *http.ServeMux, cfg *ChainConfig) *lifecycle {
 		}
 		return cfg.SessionCookie != "" && hasCookie(r, cfg.SessionCookie)
 	}}
-	idem := NewIdempotency(func(path string) bool {
-		if r, ok := routeByPath[path]; ok {
-			return r.Idempotent
+	// Idempotency is applied only to routes marked Idempotent, so RequireKey
+	// always returns true for the handlers it wraps.
+	idem := NewIdempotency(func(string) bool { return true })
+
+	mux := http.NewServeMux()
+	for _, r := range cfg.Routes {
+		r := r
+		h := r.Handler
+		// Per-route middleware, innermost first so the request flows
+		// timeout -> authn -> scope -> idempotency -> access log -> handler.
+		h = func(next http.Handler) http.Handler { return AccessLog(cfg.Logger, next) }(h)
+		if r.Idempotent {
+			h = idem.Middleware(h)
 		}
-		return false
-	})
+		if r.Scope != "" {
+			s := &ScopeAuthz{RequireScope: func(string) string { return r.Scope }}
+			h = s.Middleware(h)
+		}
+		if !r.Anonymous {
+			h = authn.Middleware(h)
+		}
+		if !r.LongRunning && r.Timeout > 0 {
+			h = Timeout(func(*http.Request) time.Duration { return r.Timeout })(h)
+		}
+		mux.Handle(r.Method+" "+r.Path, h)
+	}
 
 	h := Chain(
 		RequestID, // 1. request-id
 		func(next http.Handler) http.Handler { return Recover(cfg.Logger, next) }, // 2. panic-recover
-		BodyLimit(cfg.BodyLimit),              // 3. body-limit
-		Timeout(routeTimeout(timeoutByRoute)), // 4. per-route timeout
-		CORS(cfg.CORSOrigins),                 // 5. CORS
-		rateLimiterMiddleware(cfg.RateLimit),  // 6. rate-limit
-		authn.Middleware,                      // 7. authn
-		csrf.Middleware,                       // 8. CSRF
-		scopeAuthz.Middleware,                 // 9. scope authz
-		(&Conditional{}).Middleware,           // 10. conditional-request
-		idem.Middleware,                       // 11. idempotency
-		ProblemMapper,                         // 12. problem+json mapper
-		func(next http.Handler) http.Handler { return AccessLog(cfg.Logger, next) }, // 13. access log (innermost)
+		BodyLimit(cfg.BodyLimit),             // 3. body-limit
+		CORS(cfg.CORSOrigins),                // 4. CORS
+		rateLimiterMiddleware(cfg.RateLimit), // 5. rate-limit
+		csrf.Middleware,                      // 6. CSRF
+		(&Conditional{}).Middleware,          // 7. conditional-request
+		ProblemMapper,                        // 8. problem+json mapper
 	)(mux)
 
 	return &lifecycle{chain: h, idem: idem}
@@ -130,43 +154,6 @@ func (l *lifecycle) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (l *lifecycle) Close() {
 	if l.idem != nil {
 		l.idem.Close()
-	}
-}
-
-// indexRoutes maps a route path to its RouteInfo. Paths are unique in the
-// route table; the middleware callbacks (authn, scope, idempotency) key on
-// path alone. The timeout middleware keys on method+path via routeKey.
-func indexRoutes(routes []RouteInfo) map[string]RouteInfo {
-	m := make(map[string]RouteInfo, len(routes))
-	for _, r := range routes {
-		m[r.Path] = r
-	}
-	return m
-}
-
-// indexRoutesByMethodPath maps "METHOD path" to its RouteInfo for the timeout
-// middleware, which must distinguish methods on the same path.
-func indexRoutesByMethodPath(routes []RouteInfo) map[string]RouteInfo {
-	m := make(map[string]RouteInfo, len(routes))
-	for _, r := range routes {
-		m[r.Method+" "+r.Path] = r
-	}
-	return m
-}
-
-// routeKey returns the "METHOD path" route key for a request.
-func routeKey(r *http.Request) string { return r.Method + " " + r.URL.Path }
-
-// routeTimeout returns the per-route timeout budget: 0 disables the timeout
-// (unregistered or LongRunning routes). The timeout middleware treats <= 0 as
-// "no timeout".
-func routeTimeout(routes map[string]RouteInfo) func(*http.Request) time.Duration {
-	return func(r *http.Request) time.Duration {
-		ri, ok := routes[routeKey(r)]
-		if !ok || ri.LongRunning {
-			return 0
-		}
-		return ri.Timeout
 	}
 }
 

@@ -10,7 +10,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/selfagency/sovereign/internal/api/dto"
 	"github.com/selfagency/sovereign/internal/api/problem"
+	"github.com/selfagency/sovereign/internal/api/v1/meta"
 )
 
 // Route describes one HTTP endpoint on the /api/v1 surface.
@@ -58,16 +60,30 @@ func New(routes []Route) *http.ServeMux {
 	return mux
 }
 
+// phase1Meta is the meta/health/ready handler used by the Phase 1 route
+// table. It reports only the features actually wired for Phase 1 (the API
+// itself, plus web_authn/oidc plumbing); data-plane features are reported
+// false until their wiring lands in Phase 3/4. Production wiring (T1.10)
+// should construct a meta.Handler with the real dependencies and pass the
+// resulting routes in place of these defaults.
+var phase1Meta = meta.New(
+	meta.WithCapabilities(dto.Capabilities{
+		WebAuthn: true,
+		OIDC:     true,
+	}),
+	meta.WithVersion(meta.VersionInfo{}),
+)
+
 // Routes returns the current route set. Phase 1 endpoints only; later
-// phases (T1.6 meta, T1.7 auth) replace the 501 stubs with real handlers.
+// phases (T1.7 auth) replace the remaining 501 stubs with real handlers.
 func Routes() []Route {
 	return []Route{
 		// Meta / health / ready (anonymous).
-		{Method: http.MethodGet, Path: "/api/v1/meta/capabilities", Anonymous: true, Timeout: 5 * time.Second, Handler: notImplemented()},
-		{Method: http.MethodGet, Path: "/api/v1/meta/version", Anonymous: true, Timeout: 5 * time.Second, Handler: notImplemented()},
-		{Method: http.MethodGet, Path: "/api/v1/health", Anonymous: true, Timeout: 5 * time.Second, Handler: notImplemented()},
-		{Method: http.MethodGet, Path: "/api/v1/ready", Anonymous: true, Timeout: 5 * time.Second, Handler: notImplemented()},
-		{Method: http.MethodGet, Path: "/api/v1/openapi.json", Anonymous: true, Timeout: 5 * time.Second, Handler: notImplemented()},
+		{Method: http.MethodGet, Path: "/api/v1/meta/capabilities", Anonymous: true, Timeout: 5 * time.Second, Handler: phase1Meta.Capabilities},
+		{Method: http.MethodGet, Path: "/api/v1/meta/version", Anonymous: true, Timeout: 5 * time.Second, Handler: phase1Meta.Version},
+		{Method: http.MethodGet, Path: "/api/v1/health", Anonymous: true, Timeout: 5 * time.Second, Handler: phase1Meta.Health},
+		{Method: http.MethodGet, Path: "/api/v1/ready", Anonymous: true, Timeout: 5 * time.Second, Handler: phase1Meta.Ready},
+		{Method: http.MethodGet, Path: "/api/v1/openapi.json", Anonymous: true, Timeout: 5 * time.Second, Handler: phase1Meta.OpenAPI},
 
 		// Auth & session.
 		{Method: http.MethodPost, Path: "/api/v1/auth/invite/redeem", Anonymous: true, Idempotent: true, Timeout: 10 * time.Second, Handler: notImplemented()},

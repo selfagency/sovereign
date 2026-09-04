@@ -26,6 +26,7 @@ var goldenJSON = map[string]string{
 	"payload-too-large":     `{"type":"https://sovereign.example/problems/payload-too-large","title":"Payload Too Large","status":413}`,
 	"rate-limited":          `{"type":"https://sovereign.example/problems/rate-limited","title":"Rate Limited","status":429}`,
 	"not-implemented":       `{"type":"https://sovereign.example/problems/not-implemented","title":"Not Implemented","status":501}`,
+	"service-unavailable":   `{"type":"https://sovereign.example/problems/service-unavailable","title":"Service Unavailable","status":503}`,
 	"internal":              `{"type":"https://sovereign.example/problems/internal","title":"Internal Server Error","status":500}`,
 }
 
@@ -43,6 +44,7 @@ var statusFor = map[string]int{
 	"payload-too-large":     http.StatusRequestEntityTooLarge,
 	"rate-limited":          http.StatusTooManyRequests,
 	"not-implemented":       http.StatusNotImplemented,
+	"service-unavailable":   http.StatusServiceUnavailable,
 	"internal":              http.StatusInternalServerError,
 }
 
@@ -62,6 +64,7 @@ func constructors() map[string]*Problem {
 		"payload-too-large":     PayloadTooLarge(),
 		"rate-limited":          RateLimited(30 * time.Second),
 		"not-implemented":       NotImplemented(),
+		"service-unavailable":   ServiceUnavailable(),
 		"internal":              Internal(),
 	}
 }
