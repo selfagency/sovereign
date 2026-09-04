@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/selfagency/sovereign/internal/api/dto"
+	"github.com/selfagency/sovereign/internal/api/middleware"
 	"github.com/selfagency/sovereign/internal/api/problem"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
 )
@@ -74,16 +75,19 @@ var phase1Meta = meta.New(
 	meta.WithVersion(meta.VersionInfo{}),
 )
 
-// Routes returns the current route set. Phase 1 endpoints only; later
-// phases (T1.7 auth) replace the remaining 501 stubs with real handlers.
-func Routes() []Route {
+// RoutesFor returns the current route set with the given meta handler wired
+// to the /meta, /health, /ready, and /openapi.json routes. Routes() uses the
+// Phase-1 default handler; the server passes a handler wired to the real
+// capabilities/version/ping when it assembles the control plane (T1.10). The
+// route table is the single source of truth for both entry points.
+func RoutesFor(h *meta.Handler) []Route {
 	return []Route{
 		// Meta / health / ready (anonymous).
-		{Method: http.MethodGet, Path: "/api/v1/meta/capabilities", Anonymous: true, Timeout: 5 * time.Second, Handler: phase1Meta.Capabilities},
-		{Method: http.MethodGet, Path: "/api/v1/meta/version", Anonymous: true, Timeout: 5 * time.Second, Handler: phase1Meta.Version},
-		{Method: http.MethodGet, Path: "/api/v1/health", Anonymous: true, Timeout: 5 * time.Second, Handler: phase1Meta.Health},
-		{Method: http.MethodGet, Path: "/api/v1/ready", Anonymous: true, Timeout: 5 * time.Second, Handler: phase1Meta.Ready},
-		{Method: http.MethodGet, Path: "/api/v1/openapi.json", Anonymous: true, Timeout: 5 * time.Second, Handler: phase1Meta.OpenAPI},
+		{Method: http.MethodGet, Path: "/api/v1/meta/capabilities", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Capabilities},
+		{Method: http.MethodGet, Path: "/api/v1/meta/version", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Version},
+		{Method: http.MethodGet, Path: "/api/v1/health", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Health},
+		{Method: http.MethodGet, Path: "/api/v1/ready", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Ready},
+		{Method: http.MethodGet, Path: "/api/v1/openapi.json", Anonymous: true, Timeout: 5 * time.Second, Handler: h.OpenAPI},
 
 		// Auth & session.
 		{Method: http.MethodPost, Path: "/api/v1/auth/invite/redeem", Anonymous: true, Idempotent: true, Timeout: 10 * time.Second, Handler: notImplemented()},
@@ -95,4 +99,34 @@ func Routes() []Route {
 		{Method: http.MethodPost, Path: "/api/v1/auth/webauthn/login/begin", Anonymous: true, Timeout: 10 * time.Second, Handler: notImplemented()},
 		{Method: http.MethodPost, Path: "/api/v1/auth/webauthn/login/finish", Anonymous: true, Timeout: 10 * time.Second, Handler: notImplemented()},
 	}
+}
+
+// Routes returns the current route set with the Phase-1 default meta handler
+// (capabilities web_authn+oidc, empty version). Later phases (T1.7 auth)
+// replace the remaining 501 stubs with real handlers. Production wiring uses
+// RoutesFor with a fully-wired meta.Handler.
+func Routes() []Route {
+	return RoutesFor(phase1Meta)
+}
+
+// ToRouteInfo adapts the api.Route table to the middleware.RouteInfo slice
+// that NewHandler consumes, attaching the real handler from each Route.Handler.
+// Deriving the middleware table from api.Routes() guarantees the authn/scope
+// decisions use the exact same route set the mux registers: they can never
+// diverge.
+func ToRouteInfo(routes []Route) []middleware.RouteInfo {
+	infos := make([]middleware.RouteInfo, len(routes))
+	for i, r := range routes {
+		infos[i] = middleware.RouteInfo{
+			Method:      r.Method,
+			Path:        r.Path,
+			Scope:       r.Scope,
+			Timeout:     r.Timeout,
+			Anonymous:   r.Anonymous,
+			LongRunning: r.LongRunning,
+			Idempotent:  r.Idempotent,
+			Handler:     r.Handler,
+		}
+	}
+	return infos
 }
