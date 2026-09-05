@@ -125,7 +125,7 @@ func TestNewHandlerCSRFFormEncodedNoJS(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/session/refresh", bytes.NewBufferString(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrfTok})
-	req.AddCookie(&http.Cookie{Name: "session", Value: tok})
+	req.AddCookie(sessionCookie(tok))
 
 	rec := httptest.NewRecorder()
 	life.ServeHTTP(rec, req)
@@ -154,7 +154,7 @@ func TestNewHandlerCrossOriginUnsafeCSRFRejected(t *testing.T) {
 	req.Header.Set(csrfHeaderName, csrfTok)
 	req.Header.Set("Origin", "https://evil.example")
 	req.AddCookie(&http.Cookie{Name: csrfCookieName, Value: csrfTok})
-	req.AddCookie(&http.Cookie{Name: "session", Value: tok})
+	req.AddCookie(sessionCookie(tok))
 
 	rec := httptest.NewRecorder()
 	life.ServeHTTP(rec, req)

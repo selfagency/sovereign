@@ -9,6 +9,11 @@ info:
 servers:
   - url: https://id.<domain>/api/v1
     description: Identity host, versioned API base.
+# Default security for the API: bearer (programmatic) or session cookie
+# (browser). Operations that are anonymous override this with `security: []`.
+security:
+  - bearerAuth: []
+  - cookieAuth: []
 paths:
   /meta/capabilities:
     get:
@@ -271,6 +276,7 @@ components:
           format: uri
         errors:
           type: array
+          maxItems: 10
           items:
             $ref: "#/components/schemas/FieldError"
     FieldError:

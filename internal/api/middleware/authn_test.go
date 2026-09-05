@@ -160,7 +160,7 @@ func TestAuthNBearerAndCookieRejected(t *testing.T) {
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+tok)
-	req.AddCookie(&http.Cookie{Name: "session", Value: "opaque-session-token"})
+	req.AddCookie(sessionCookie("opaque-session-token"))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -215,7 +215,7 @@ func TestAuthNJWTCookieDualRead(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "session", Value: tok})
+	req.AddCookie(sessionCookie(tok))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -238,7 +238,7 @@ func TestAuthNJWTCookieDualReadDisabled(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "session", Value: tok})
+	req.AddCookie(sessionCookie(tok))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -266,7 +266,7 @@ func TestAuthNOpaqueSession(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "session", Value: tok})
+	req.AddCookie(sessionCookie(tok))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -294,7 +294,7 @@ func TestAuthNOpaqueSessionExpired(t *testing.T) {
 		w.WriteHeader(http.StatusOK)
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "session", Value: tok})
+	req.AddCookie(sessionCookie(tok))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -315,8 +315,8 @@ func TestAuthNAmbiguousCookie(t *testing.T) {
 	}))
 	// Two cookies, same name: one JWT-shaped, one opaque-shaped.
 	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "session", Value: tok})
-	req.AddCookie(&http.Cookie{Name: "session", Value: "opaque-token"})
+	req.AddCookie(sessionCookie(tok))
+	req.AddCookie(sessionCookie("opaque-token"))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {

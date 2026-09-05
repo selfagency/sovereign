@@ -142,11 +142,11 @@ func (ta *testAPI) do(r *http.Request) *httptest.ResponseRecorder {
 // cookieReq adds a session cookie (and CSRF for unsafe methods).
 func (ta *testAPI) cookieReq(method, path, sessionToken string) *http.Request {
 	r := ta.req(method, path)
-	r.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: sessionToken})
+	r.AddCookie(sessionCookieFixture(sessionToken))
 	if method != http.MethodGet {
 		// Cookie-authenticated unsafe requests require the double-submit CSRF token.
 		tok := "csrf-token"
-		r.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: tok})
+		r.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: tok, Path: "/", Secure: true})
 		r.Header.Set("X-CSRF-Token", tok)
 	}
 	return r
@@ -411,7 +411,7 @@ func TestHandlerRefreshSessionRevoked(t *testing.T) {
 	}
 	h := directHandler(t, s, testKey(t))
 	req := principalCtxRequest(t, httptest.NewRequest(http.MethodPost, "/session/refresh", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
-	req.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: tok})
+	req.AddCookie(sessionCookieFixture(tok))
 	rec := httptest.NewRecorder()
 	h.RefreshSession(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -426,7 +426,7 @@ func TestHandlerRefreshSessionExpired(t *testing.T) {
 	tok := createSession(t, s, u.ID, -time.Hour)
 	h := directHandler(t, s, testKey(t))
 	req := principalCtxRequest(t, httptest.NewRequest(http.MethodPost, "/session/refresh", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
-	req.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: tok})
+	req.AddCookie(sessionCookieFixture(tok))
 	rec := httptest.NewRecorder()
 	h.RefreshSession(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -456,7 +456,7 @@ func TestHandlerRefreshSessionUnknownRow(t *testing.T) {
 	u := seedTenantUser(t, s, "identity", "alice")
 	h := directHandler(t, s, testKey(t))
 	req := principalCtxRequest(t, httptest.NewRequest(http.MethodPost, "/session/refresh", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
-	req.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: "unknown-token"})
+	req.AddCookie(sessionCookieFixture("unknown-token"))
 	rec := httptest.NewRecorder()
 	h.RefreshSession(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -471,7 +471,7 @@ func TestHandlerDeleteSessionMissingRow(t *testing.T) {
 	u := seedTenantUser(t, s, "identity", "alice")
 	h := directHandler(t, s, testKey(t))
 	req := principalCtxRequest(t, httptest.NewRequest(http.MethodDelete, "/session", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
-	req.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: "gone-token"})
+	req.AddCookie(sessionCookieFixture("gone-token"))
 	rec := httptest.NewRecorder()
 	h.DeleteSession(rec, req)
 	if rec.Code != http.StatusNoContent {
@@ -487,7 +487,7 @@ func TestHandlerDeleteSessionRevokes(t *testing.T) {
 	tok := createSession(t, s, u.ID, time.Hour)
 	h := directHandler(t, s, testKey(t))
 	req := principalCtxRequest(t, httptest.NewRequest(http.MethodDelete, "/session", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
-	req.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: tok})
+	req.AddCookie(sessionCookieFixture(tok))
 	rec := httptest.NewRecorder()
 	h.DeleteSession(rec, req)
 	if rec.Code != http.StatusNoContent {
@@ -1116,4 +1116,18 @@ func mustSessionID(t *testing.T, s *store.Store, token string) string {
 		t.Fatal(err)
 	}
 	return sess.ID
+}
+
+// sessionCookieFixture builds a session-cookie request fixture matching the
+// real session cookie (HttpOnly, Secure, SameSite=Lax, Path=/) so gosec G409
+// does not flag bare {Name,Value} test cookies as insecure session cookies.
+func sessionCookieFixture(value string) *http.Cookie {
+	return &http.Cookie{
+		Name:     v1auth.SessionCookie,
+		Value:    value,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	}
 }

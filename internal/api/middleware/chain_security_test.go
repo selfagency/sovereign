@@ -94,7 +94,7 @@ func TestNewHandlerCookieAdminScope(t *testing.T) {
 
 	// Cookie admin reaches the admin route (200, not 403 InsufficientScope).
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "session", Value: adminTok})
+	req.AddCookie(sessionCookie(adminTok))
 	rec := httptest.NewRecorder()
 	life.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -103,7 +103,7 @@ func TestNewHandlerCookieAdminScope(t *testing.T) {
 
 	// Cookie non-admin is 403.
 	req = httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", http.NoBody)
-	req.AddCookie(&http.Cookie{Name: "session", Value: nonAdminTok})
+	req.AddCookie(sessionCookie(nonAdminTok))
 	rec = httptest.NewRecorder()
 	life.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -147,7 +147,7 @@ func TestAuthNBearerEmptyCookie(t *testing.T) {
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
 	req.Header.Set("Authorization", "Bearer "+tok)
-	req.AddCookie(&http.Cookie{Name: "session", Value: ""})
+	req.AddCookie(sessionCookie(""))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
