@@ -43,6 +43,25 @@ func (s *Store) CreateProofClaim(ctx context.Context, c *ProofClaim) error {
 // same service + location.
 var ErrDuplicateClaim = errors.New("store: duplicate claim")
 
+// GetProofClaim returns a single claim scoped to a tenant. It returns
+// ErrNotFound when the claim does not exist in the tenant.
+func (s *Store) GetProofClaim(ctx context.Context, tenantID, id string) (*ProofClaim, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, tenant_id, account_id, anchor_type, anchor_value, service, claim_location, expected_token, status, last_checked_at, last_error, created_at
+		 FROM proof_claims WHERE tenant_id = ? AND id = ?`, tenantID, id)
+	var c ProofClaim
+	var lastErr sql.NullString
+	if err := row.Scan(&c.ID, &c.TenantID, &c.AccountID, &c.AnchorType, &c.AnchorValue,
+		&c.Service, &c.ClaimLocation, &c.ExpectedToken, &c.Status, &c.LastCheckedAt, &lastErr, &c.CreatedAt); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	c.LastError = lastErr.String
+	return &c, nil
+}
+
 // ListProofClaims returns a tenant's claims.
 func (s *Store) ListProofClaims(ctx context.Context, tenantID string) ([]ProofClaim, error) {
 	rows, err := s.db.QueryContext(ctx,

@@ -199,6 +199,38 @@ func TestProofClaimCRUD(t *testing.T) {
 	}
 }
 
+// TestGetProofClaim verifies fetching a single claim by id, scoped to tenant,
+// and that a missing claim returns ErrNotFound.
+func TestGetProofClaim(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+
+	c := ProofClaim{
+		ID: "c1", TenantID: "t1", AccountID: "a1", AnchorType: "did", AnchorValue: "did:plc:x",
+		Service: "dns", ClaimLocation: "_atproto.example.com", ExpectedToken: "did:plc:x", Status: "pending", CreatedAt: time.Now(),
+	}
+	if err := s.CreateProofClaim(ctx, &c); err != nil {
+		t.Fatalf("CreateProofClaim: %v", err)
+	}
+
+	got, err := s.GetProofClaim(ctx, "t1", "c1")
+	if err != nil {
+		t.Fatalf("GetProofClaim: %v", err)
+	}
+	if got.ID != "c1" || got.TenantID != "t1" || got.Status != "pending" {
+		t.Fatalf("GetProofClaim = %+v", got)
+	}
+
+	// Missing claim -> ErrNotFound.
+	if _, err := s.GetProofClaim(ctx, "t1", "nope"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing = %v, want ErrNotFound", err)
+	}
+	// Wrong tenant -> ErrNotFound (isolation).
+	if _, err := s.GetProofClaim(ctx, "t2", "c1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("other tenant = %v, want ErrNotFound", err)
+	}
+}
+
 // TestProofClaimListEmpty verifies listing with no claims returns empty.
 func TestProofClaimListEmpty(t *testing.T) {
 	s := newTestStore(t)
