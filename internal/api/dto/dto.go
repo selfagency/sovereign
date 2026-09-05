@@ -136,6 +136,18 @@ type BackupRun struct {
 	DestinationKey string     `json:"destination_key"`
 }
 
+// BackupRestore is a single restore execution. FinishedAt and Error are null
+// while the restore is in progress or succeeded.
+type BackupRestore struct {
+	ID          string     `json:"id"`
+	StartedAt   time.Time  `json:"started_at"`
+	FinishedAt  *time.Time `json:"finished_at"`
+	Status      string     `json:"status"`
+	Error       *string    `json:"error"`
+	SourceKey   string     `json:"source_key"`
+	RequestedBy string     `json:"requested_by"`
+}
+
 // Takedown is a moderation takedown action against a resource.
 type Takedown struct {
 	ID        string    `json:"id"`
