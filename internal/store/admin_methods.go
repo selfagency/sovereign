@@ -239,34 +239,26 @@ func (s *Store) DeleteUser(ctx context.Context, id string) error {
 		return ErrNotFound
 	}
 
-	// Profile links first (they reference profile_pages), then the page.
-	if _, err := tx.ExecContext(ctx,
-		`DELETE FROM profile_links WHERE profile_page_id IN (SELECT id FROM profile_pages WHERE account_id = ?)`, id); err != nil {
-		return fmt.Errorf("store: delete user: %w", err)
+	// Every dependent table, in dependency order (profile_links reference
+	// profile_pages, so the former goes first).
+	del := []struct {
+		query string
+		arg   string
+	}{
+		{`DELETE FROM profile_links WHERE profile_page_id IN (SELECT id FROM profile_pages WHERE account_id = ?)`, id},
+		{`DELETE FROM profile_pages WHERE account_id = ?`, id},
+		{`DELETE FROM sessions WHERE user_id = ?`, id},
+		{`DELETE FROM webauthn_credentials WHERE user_id = ?`, id},
+		{`DELETE FROM public_keys WHERE account_id = ?`, id},
+		{`DELETE FROM proof_claims WHERE account_id = ?`, id},
+		{`DELETE FROM auth_refresh_tokens WHERE subject = ?`, id},
+		{`DELETE FROM invite_tokens WHERE user_id = ?`, id},
+		{`DELETE FROM users WHERE id = ?`, id},
 	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM profile_pages WHERE account_id = ?`, id); err != nil {
-		return fmt.Errorf("store: delete user: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM sessions WHERE user_id = ?`, id); err != nil {
-		return fmt.Errorf("store: delete user: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM webauthn_credentials WHERE user_id = ?`, id); err != nil {
-		return fmt.Errorf("store: delete user: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM public_keys WHERE account_id = ?`, id); err != nil {
-		return fmt.Errorf("store: delete user: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM proof_claims WHERE account_id = ?`, id); err != nil {
-		return fmt.Errorf("store: delete user: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM auth_refresh_tokens WHERE subject = ?`, id); err != nil {
-		return fmt.Errorf("store: delete user: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM invite_tokens WHERE user_id = ?`, id); err != nil {
-		return fmt.Errorf("store: delete user: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, id); err != nil {
-		return fmt.Errorf("store: delete user: %w", err)
+	for _, d := range del {
+		if _, err := tx.ExecContext(ctx, d.query, d.arg); err != nil {
+			return fmt.Errorf("store: delete user: %w", err)
+		}
 	}
 	return tx.Commit()
 }

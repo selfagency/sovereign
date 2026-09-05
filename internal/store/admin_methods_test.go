@@ -58,17 +58,11 @@ func TestUpdateProfileLink(t *testing.T) {
 	ctx := context.Background()
 	seedTenant(t, s, ctx, "t1", "t1", "did:web:t1")
 	seedUser(t, s, ctx, "u1", "t1", "alice")
-	if err := s.UpsertProfilePage(ctx, &ProfilePage{ID: "pp1", TenantID: "t1", AccountID: "u1", DisplayName: "alice", Theme: "default", UpdatedAt: time.Now()}); err != nil {
-		t.Fatalf("UpsertProfilePage: %v", err)
-	}
-	if err := s.AddProfileLink(ctx, &ProfileLink{ID: "l1", ProfilePageID: "pp1", Position: 0, Kind: "url", Label: "old", URL: "https://old.test", IsVisible: true, CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("AddProfileLink: %v", err)
-	}
+	must(t, s.UpsertProfilePage(ctx, &ProfilePage{ID: "pp1", TenantID: "t1", AccountID: "u1", DisplayName: "alice", Theme: "default", UpdatedAt: time.Now()}))
+	must(t, s.AddProfileLink(ctx, &ProfileLink{ID: "l1", ProfilePageID: "pp1", Position: 0, Kind: "url", Label: "old", URL: "https://old.test", IsVisible: true, CreatedAt: time.Now()}))
 
 	upd := &ProfileLink{ID: "l1", ProfilePageID: "pp1", Position: 2, Kind: "email", BrandKey: "bk", Label: "new", URL: "mailto:a@b.test", IconBlobKey: "ic", IsVisible: false}
-	if err := s.UpdateProfileLink(ctx, "pp1", "l1", upd); err != nil {
-		t.Fatalf("UpdateProfileLink: %v", err)
-	}
+	must(t, s.UpdateProfileLink(ctx, "pp1", "l1", upd))
 	links, err := s.ListProfileLinks(ctx, "pp1")
 	if err != nil {
 		t.Fatalf("ListProfileLinks: %v", err)
@@ -297,31 +291,15 @@ func TestDeleteUserCascade(t *testing.T) {
 	seedUser(t, s, ctx, "u1", "t1", "alice")
 
 	// Populate every related table.
-	if err := s.AddWebAuthnCredential(ctx, &WebAuthnCredential{ID: "c1", UserID: "u1", CredentialID: []byte("cred"), PublicKey: []byte("pk"), Data: []byte("d"), CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("AddWebAuthnCredential: %v", err)
-	}
-	if err := s.CreatePublicKey(ctx, &PublicKey{ID: "k1", TenantID: "t1", AccountID: "u1", KeyType: "ssh", Fingerprint: "fp", KeyMaterial: "ssh-ed25519 AAAA", CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("CreatePublicKey: %v", err)
-	}
-	if err := s.CreateProofClaim(ctx, &ProofClaim{ID: "pc1", TenantID: "t1", AccountID: "u1", AnchorType: "dns", AnchorValue: "x", Service: "s", ClaimLocation: "l", ExpectedToken: "t", Status: "pending", CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("CreateProofClaim: %v", err)
-	}
-	if err := s.UpsertProfilePage(ctx, &ProfilePage{ID: "pp1", TenantID: "t1", AccountID: "u1", DisplayName: "alice", Theme: "default", UpdatedAt: time.Now()}); err != nil {
-		t.Fatalf("UpsertProfilePage: %v", err)
-	}
-	if err := s.AddProfileLink(ctx, &ProfileLink{ID: "l1", ProfilePageID: "pp1", Position: 0, Kind: "url", Label: "x", URL: "https://x", IsVisible: true, CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("AddProfileLink: %v", err)
-	}
-	if err := s.SaveAuthRefreshToken(ctx, &AuthRefreshToken{Token: "tok", Subject: "u1", ClientID: "c", Scopes: "openid", AuthTime: time.Now(), CreatedAt: time.Now()}); err != nil {
-		t.Fatalf("SaveAuthRefreshToken: %v", err)
-	}
-	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "it1", TokenHash: "hash", UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatalf("CreateInviteToken: %v", err)
-	}
+	must(t, s.AddWebAuthnCredential(ctx, &WebAuthnCredential{ID: "c1", UserID: "u1", CredentialID: []byte("cred"), PublicKey: []byte("pk"), Data: []byte("d"), CreatedAt: time.Now()}))
+	must(t, s.CreatePublicKey(ctx, &PublicKey{ID: "k1", TenantID: "t1", AccountID: "u1", KeyType: "ssh", Fingerprint: "fp", KeyMaterial: "ssh-ed25519 AAAA", CreatedAt: time.Now()}))
+	must(t, s.CreateProofClaim(ctx, &ProofClaim{ID: "pc1", TenantID: "t1", AccountID: "u1", AnchorType: "dns", AnchorValue: "x", Service: "s", ClaimLocation: "l", ExpectedToken: "t", Status: "pending", CreatedAt: time.Now()}))
+	must(t, s.UpsertProfilePage(ctx, &ProfilePage{ID: "pp1", TenantID: "t1", AccountID: "u1", DisplayName: "alice", Theme: "default", UpdatedAt: time.Now()}))
+	must(t, s.AddProfileLink(ctx, &ProfileLink{ID: "l1", ProfilePageID: "pp1", Position: 0, Kind: "url", Label: "x", URL: "https://x", IsVisible: true, CreatedAt: time.Now()}))
+	must(t, s.SaveAuthRefreshToken(ctx, &AuthRefreshToken{Token: "tok", Subject: "u1", ClientID: "c", Scopes: "openid", AuthTime: time.Now(), CreatedAt: time.Now()}))
+	must(t, s.CreateInviteToken(ctx, &InviteToken{ID: "it1", TokenHash: "hash", UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)}))
 
-	if err := s.DeleteUser(ctx, "u1"); err != nil {
-		t.Fatalf("DeleteUser: %v", err)
-	}
+	must(t, s.DeleteUser(ctx, "u1"))
 
 	// User gone.
 	if _, err := s.UserByID(ctx, "u1"); !errors.Is(err, ErrNotFound) {

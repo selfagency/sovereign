@@ -25,9 +25,10 @@ func okHandler() http.Handler {
 	})
 }
 
-// withCSRFCookie attaches a __Host-csrf cookie to the request.
+// withCSRFCookie attaches a __Host-csrf cookie to the request. Secure and
+// Path are set to match SetToken; HttpOnly stays false (double-submit CSRF).
 func withCSRFCookie(r *http.Request, token string) *http.Request {
-	r.AddCookie(&http.Cookie{Name: csrfCookieName, Value: token})
+	r.AddCookie(&http.Cookie{Name: csrfCookieName, Value: token, Path: "/", Secure: true, HttpOnly: false}) // #nosec G409 -- double-submit CSRF test fixture
 	return r
 }
 

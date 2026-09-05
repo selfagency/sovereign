@@ -105,14 +105,16 @@ func isFormEncoded(r *http.Request) bool {
 }
 
 // SetToken sets the double-submit CSRF cookie. HttpOnly is false so JS can
-// read it for the header path; Secure and Path=/ satisfy the __Host- prefix.
+// read it for the header path (double-submit pattern, see api.js); Secure and
+// Path=/ satisfy the __Host- prefix. This is a CSRF token cookie, not a
+// session cookie, so gosec G409 is a false positive.
 func SetToken(w http.ResponseWriter, token string) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,
 		Value:    token,
 		Path:     "/",
 		Secure:   true,
-		HttpOnly: false,
+		HttpOnly: false, // #nosec G409 -- double-submit CSRF; JS must read it, not a session cookie
 		SameSite: http.SameSiteLaxMode,
 	})
 }

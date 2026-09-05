@@ -168,17 +168,14 @@ func TestPruneUserSessions(t *testing.T) {
 	}
 
 	n, err := s.PruneUserSessions(ctx, "user-1", 3)
-	if err != nil {
-		t.Fatalf("PruneUserSessions: %v", err)
-	}
+	must(t, err)
 	if n != 2 {
 		t.Fatalf("pruned = %d, want 2", n)
 	}
 
 	all, err := s.ListUserSessions(ctx, "user-1")
-	if err != nil {
-		t.Fatalf("ListUserSessions: %v", err)
-	}
+	must(t, err)
+
 	active := 0
 	revokedIDs := map[string]bool{}
 	for _, sess := range all {
