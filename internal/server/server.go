@@ -297,12 +297,6 @@ func (s *Server) buildRouter() error {
 		if provider != nil {
 			identity.Handle("/", provider.Handler())
 		}
-		if waHandler != nil {
-			identity.Handle("/webauthn/register/begin", http.HandlerFunc(waHandler.RegisterBegin))
-			identity.Handle("/webauthn/register/finish", http.HandlerFunc(waHandler.RegisterFinish))
-			identity.Handle("/webauthn/login/begin", http.HandlerFunc(waHandler.LoginBegin))
-			identity.Handle("/webauthn/login/finish", http.HandlerFunc(waHandler.LoginFinish))
-		}
 		// IndieAuth endpoints.
 		iaSessions := newIndieAuthSessionStore()
 		identity.Handle("/indieauth/auth", http.HandlerFunc(indieAuthAuthorize(iaBridge, iaSessions)))

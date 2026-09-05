@@ -59,3 +59,68 @@ func TestProblemMapperExistingProblem(t *testing.T) {
 		t.Fatalf("body = %q, want existing problem untouched", rec.Body.String())
 	}
 }
+
+// TestProblemFromStatus verifies every status mapping in problemFromStatus.
+func TestProblemFromStatus(t *testing.T) {
+	cases := []struct {
+		name   string
+		status int
+		title  string // expected problem title, or "" to just assert the status round-trips
+	}{
+		{"unauthorized", http.StatusUnauthorized, "Unauthenticated"},
+		{"forbidden", http.StatusForbidden, "Forbidden"},
+		{"not-found", http.StatusNotFound, "Not Found"},
+		{"conflict", http.StatusConflict, "Conflict"},
+		{"payload-too-large", http.StatusRequestEntityTooLarge, "Payload Too Large"},
+		{"too-many-requests", http.StatusTooManyRequests, "Rate Limited"},
+		{"internal", http.StatusInternalServerError, "Internal Server Error"},
+		{"not-implemented", http.StatusNotImplemented, "Not Implemented"},
+		{"default", http.StatusBadGateway, ""}, // unmapped -> bare Problem with just Status
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := problemFromStatus(tc.status)
+			if p == nil {
+				t.Fatalf("problemFromStatus(%d) = nil", tc.status)
+			}
+			if p.Status != tc.status {
+				t.Fatalf("problem.Status = %d, want %d", p.Status, tc.status)
+			}
+			if tc.title != "" && p.Title != tc.title {
+				t.Fatalf("problem.Title = %q, want %q", p.Title, tc.title)
+			}
+		})
+	}
+}
+
+// TestProblemMapperSynthesizesStatus verifies ProblemMapper synthesizes a
+// problem body for each status a bare (empty, no content-type) error handler
+// might return.
+func TestProblemMapperSynthesizesStatus(t *testing.T) {
+	for _, status := range []int{
+		http.StatusUnauthorized,
+		http.StatusForbidden,
+		http.StatusNotFound,
+		http.StatusConflict,
+		http.StatusRequestEntityTooLarge,
+		http.StatusTooManyRequests,
+		http.StatusInternalServerError,
+		http.StatusNotImplemented,
+		http.StatusBadGateway,
+	} {
+		h := ProblemMapper(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(status)
+		}))
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/x", http.NoBody))
+		if rec.Code != status {
+			t.Fatalf("status %d: got %d", status, rec.Code)
+		}
+		if rec.Body.Len() == 0 {
+			t.Fatalf("status %d: no body synthesized", status)
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "application/problem+json") {
+			t.Fatalf("status %d: content-type = %q", status, ct)
+		}
+	}
+}

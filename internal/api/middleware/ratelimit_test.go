@@ -133,3 +133,72 @@ func TestRateLimitResetHeader(t *testing.T) {
 		t.Fatalf("RateLimit-Reset = %q not a valid epoch: %v", rec.Header().Get("RateLimit-Reset"), err)
 	}
 }
+
+// TestRateLimiterPrune verifies idle buckets are dropped after the TTL.
+func TestRateLimiterPrune(t *testing.T) {
+	rl := NewRateLimiter(1, 1)
+	rl.now = func() time.Time { return time.Unix(1000, 0) }
+	defer rl.Close()
+	// Exhaust a bucket for a specific IP.
+	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
+	req.RemoteAddr = "10.0.0.1:1234"
+	rec := httptest.NewRecorder()
+	rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).ServeHTTP(rec, req)
+	rec = httptest.NewRecorder()
+	rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).ServeHTTP(rec, req)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status = %d, want 429", rec.Code)
+	}
+
+	// Advance time well past the prune TTL (burst/rate*10, min 1m) and prune.
+	rl.now = func() time.Time { return time.Unix(1000+120, 0) }
+	rl.prune(rl.now())
+
+	// The bucket is gone, so the request is allowed again.
+	rec = httptest.NewRecorder()
+	rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("post-prune status = %d, want 200", rec.Code)
+	}
+}
+
+// TestRateLimiterRetryAfterZero verifies retryAfter returns 0 when no bucket
+// exists and 1s when rate is zero.
+func TestRateLimiterRetryAfter(t *testing.T) {
+	rl := NewRateLimiter(1, 2)
+	rl.now = func() time.Time { return time.Unix(1000, 0) }
+	defer rl.Close()
+
+	// No bucket yet -> 0.
+	if got := rl.retryAfter("10.0.0.9"); got != 0 {
+		t.Fatalf("retryAfter no bucket = %v, want 0", got)
+	}
+
+	// Zero rate -> 1s fallback.
+	rlZero := NewRateLimiter(0, 1)
+	rlZero.now = func() time.Time { return time.Unix(1000, 0) }
+	defer rlZero.Close()
+	if got := rlZero.retryAfter("10.0.0.9"); got != time.Second {
+		t.Fatalf("retryAfter zero rate = %v, want 1s", got)
+	}
+
+	// Exhaust a bucket then retryAfter estimates > 0.
+	req := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
+	req.RemoteAddr = "10.0.0.5:1"
+	rec := httptest.NewRecorder()
+	h := rl.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	h.ServeHTTP(rec, req)
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if got := rl.retryAfter("10.0.0.5"); got <= 0 {
+		t.Fatalf("retryAfter exhausted = %v, want > 0", got)
+	}
+}
+
+// TestClientIPNoPort verifies RemoteAddr without a port is returned verbatim.
+func TestClientIPNoPort(t *testing.T) {
+	r := httptest.NewRequest(http.MethodGet, "/x", http.NoBody)
+	r.RemoteAddr = "10.1.2.3"
+	if got := clientIP(r); got != "10.1.2.3" {
+		t.Fatalf("clientIP = %q, want 10.1.2.3", got)
+	}
+}

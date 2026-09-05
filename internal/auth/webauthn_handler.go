@@ -36,121 +36,9 @@ func NewWebAuthnHandler(rpID, rpDisplayName, origin string, st *store.Store) (*W
 	}, nil
 }
 
-// RegisterBegin starts passkey registration for a user.
-func (h *WebAuthnHandler) RegisterBegin(w http.ResponseWriter, r *http.Request) {
-	user, err := h.userFromRequest(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	creation, session, err := h.wa.BeginRegistration(user)
-	if err != nil {
-		http.Error(w, "begin registration: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.session.Put(session.Challenge, session)
-	writeJSON(w, http.StatusOK, creation)
-}
-
-// RegisterFinish validates the attestation and stores the credential.
-func (h *WebAuthnHandler) RegisterFinish(w http.ResponseWriter, r *http.Request) {
-	user, err := h.userFromRequest(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	session, err := h.sessionFromRequest(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	cred, err := h.wa.FinishRegistration(user, session, r)
-	if err != nil {
-		http.Error(w, "finish registration: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	// Persist the credential (full JSON for round-trip).
-	data, err := json.Marshal(cred)
-	if err != nil {
-		http.Error(w, "marshal credential: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if err := h.store.AddWebAuthnCredential(r.Context(), &store.WebAuthnCredential{
-		ID:           string(cred.ID),
-		UserID:       user.ID,
-		CredentialID: cred.ID,
-		PublicKey:    cred.PublicKey,
-		SignCount:    cred.Authenticator.SignCount,
-		Data:         data,
-	}); err != nil {
-		http.Error(w, "store credential: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.session.Delete(session.Challenge)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-// LoginBegin starts passkey login for a user.
-func (h *WebAuthnHandler) LoginBegin(w http.ResponseWriter, r *http.Request) {
-	user, err := h.userFromRequest(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	assertion, session, err := h.wa.BeginLogin(user)
-	if err != nil {
-		http.Error(w, "begin login: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.session.Put(session.Challenge, session)
-	writeJSON(w, http.StatusOK, assertion)
-}
-
-// LoginFinish validates the assertion and returns the authenticated user.
-func (h *WebAuthnHandler) LoginFinish(w http.ResponseWriter, r *http.Request) {
-	user, err := h.userFromRequest(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	session, err := h.sessionFromRequest(r)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	cred, err := h.wa.FinishLogin(user, session, r)
-	if err != nil {
-		http.Error(w, "finish login: "+err.Error(), http.StatusBadRequest)
-		return
-	}
-	// Update the sign count.
-	if err := h.store.UpdateWebAuthnSignCount(r.Context(), string(cred.ID), cred.Authenticator.SignCount); err != nil {
-		http.Error(w, "update sign count: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	h.session.Delete(session.Challenge)
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "user_id": user.ID})
-}
-
-// userFromRequest loads the user (by handle query param) and populates their
-// WebAuthn credentials from the store.
-func (h *WebAuthnHandler) userFromRequest(r *http.Request) (*User, error) {
-	handle := r.URL.Query().Get("handle")
-	if handle == "" {
-		return nil, errors.New("missing handle query param")
-	}
-	// The identity tenant owns all users.
-	su, err := h.store.UserByHandle(r.Context(), "identity", handle)
-	if err != nil {
-		return nil, errors.New("unknown user")
-	}
-	return h.authUserFromStore(su)
-}
-
 // loadUserByID loads a user by ID and populates their WebAuthn credentials,
-// mirroring userFromRequest but keyed on the authenticated user ID rather than
-// a client-supplied handle. This is the B11 fix: registration derives the
-// user from the authenticated session, never from a ?handle= query param.
+// keyed on the authenticated user ID (the B11 fix: registration derives the
+// user from the authenticated session, never from a client-supplied handle).
 func (h *WebAuthnHandler) loadUserByID(userID string) (*User, error) {
 	su, err := h.store.UserByID(context.Background(), userID)
 	if err != nil {
@@ -280,19 +168,15 @@ func (h *WebAuthnHandler) sessionFromRequest(r *http.Request) (*webauthn.Session
 	return session, nil
 }
 
-// writeJSON writes a JSON response with the given status.
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
 // SessionStore is a short-lived in-memory store for WebAuthn begin/finish
-// sessions, keyed by challenge. Entries expire after a TTL.
+// sessions, keyed by challenge. Entries expire after a TTL; when a non-zero
+// maxEntries cap is set, the oldest entry is evicted once the store exceeds
+// it, so never-completed challenges cannot grow the map without bound.
 type SessionStore struct {
-	mu   sync.Mutex
-	ttl  time.Duration
-	data map[string]sessionEntry
+	mu         sync.Mutex
+	ttl        time.Duration
+	maxEntries int
+	data       map[string]sessionEntry
 }
 
 type sessionEntry struct {
@@ -300,16 +184,49 @@ type sessionEntry struct {
 	expiresAt time.Time
 }
 
-// NewSessionStore builds a session store with the given TTL.
+// maxSessionEntries is the default cap on concurrent in-memory WebAuthn
+// sessions. It bounds memory from abandoned challenges (the TTL alone does
+// not evict until a Get touches an expired entry).
+const maxSessionEntries = 1000
+
+// NewSessionStore builds a session store with the given TTL and the default
+// entry cap.
 func NewSessionStore(ttl time.Duration) *SessionStore {
-	return &SessionStore{ttl: ttl, data: map[string]sessionEntry{}}
+	return NewSessionStoreWithMax(ttl, maxSessionEntries)
 }
 
-// Put stores a session keyed by challenge.
+// NewSessionStoreWithMax builds a session store with the given TTL and max
+// concurrent entries. A max of 0 leaves the store unbounded.
+func NewSessionStoreWithMax(ttl time.Duration, maxEntries int) *SessionStore {
+	return &SessionStore{ttl: ttl, maxEntries: maxEntries, data: map[string]sessionEntry{}}
+}
+
+// Put stores a session keyed by challenge. When the store is at capacity the
+// oldest entry is evicted to make room.
 func (s *SessionStore) Put(challenge string, session *webauthn.SessionData) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, exists := s.data[challenge]; !exists && s.maxEntries > 0 && len(s.data) >= s.maxEntries {
+		s.evictOldestLocked()
+	}
 	s.data[challenge] = sessionEntry{session: session, expiresAt: time.Now().Add(s.ttl)}
+}
+
+// evictOldestLocked removes the single oldest non-expired entry (or any entry
+// if all are expired). Caller must hold s.mu.
+func (s *SessionStore) evictOldestLocked() {
+	var oldestKey string
+	var oldestExp time.Time
+	first := true
+	for k, e := range s.data {
+		if first || e.expiresAt.Before(oldestExp) {
+			oldestKey, oldestExp = k, e.expiresAt
+			first = false
+		}
+	}
+	if oldestKey != "" {
+		delete(s.data, oldestKey)
+	}
 }
 
 // Get returns a non-expired session by challenge.

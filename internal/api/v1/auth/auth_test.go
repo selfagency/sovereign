@@ -222,6 +222,384 @@ func TestRedeemInviteProgrammatic(t *testing.T) {
 	}
 }
 
+// TestRedeemInviteMissingToken verifies a request with no token is a 400.
+func TestRedeemInviteMissingToken(t *testing.T) {
+	ta := newTestAPI(t)
+	r := ta.req(http.MethodPost, "/api/v1/auth/invite/redeem")
+	r.Body = io.NopCloser(strings.NewReader(`{}`))
+	r.Header.Set("Content-Type", "application/json")
+	rec := ta.do(r)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing token redeem = %d, want 400", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "invalid") {
+		t.Fatalf("body = %s, want invalid problem", rec.Body.String())
+	}
+}
+
+// TestRedeemInviteUsed verifies a consumed invite is a 409 Conflict.
+func TestRedeemInviteUsed(t *testing.T) {
+	ta := newTestAPI(t)
+	u := seedTenantUser(t, ta.s, "identity", "alice")
+	raw := seedInvite(t, ta.s, u.ID)
+	// Consume the invite first via the store.
+	if err := ta.s.MarkInviteTokenUsed(context.Background(), "inv-"+u.ID); err != nil {
+		t.Fatal(err)
+	}
+	r := ta.req(http.MethodPost, "/api/v1/auth/invite/redeem")
+	r.Body = io.NopCloser(strings.NewReader(`{"token":"` + raw + `"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "key-1")
+	rec := ta.do(r)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("used invite redeem = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRedeemInviteExpired verifies an expired invite is a 409 Conflict.
+func TestRedeemInviteExpired(t *testing.T) {
+	ta := newTestAPI(t)
+	u := seedTenantUser(t, ta.s, "identity", "alice")
+	// Seed an already-expired invite.
+	if err := ta.s.CreateInviteToken(context.Background(), &store.InviteToken{
+		ID: "inv-expired", TokenHash: hashToken("expired-token"), UserID: u.ID,
+		ExpiresAt: time.Now().Add(-time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := ta.req(http.MethodPost, "/api/v1/auth/invite/redeem")
+	r.Body = io.NopCloser(strings.NewReader(`{"token":"expired-token"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "key-1")
+	rec := ta.do(r)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("expired invite redeem = %d, want 409 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRedeemInviteUnknown verifies an unknown invite token is a 404.
+func TestRedeemInviteUnknown(t *testing.T) {
+	ta := newTestAPI(t)
+	r := ta.req(http.MethodPost, "/api/v1/auth/invite/redeem")
+	r.Body = io.NopCloser(strings.NewReader(`{"token":"does-not-exist"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "key-1")
+	rec := ta.do(r)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown invite redeem = %d, want 404", rec.Code)
+	}
+}
+
+// TestRedeemInviteDeletedUser verifies an invite whose user was deleted is a
+// 404 (never mint a session for a non-existent subject).
+func TestRedeemInviteDeletedUser(t *testing.T) {
+	ta := newTestAPI(t)
+	u := seedTenantUser(t, ta.s, "identity", "alice")
+	raw := seedInvite(t, ta.s, u.ID)
+	if err := ta.s.DeleteUser(context.Background(), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	r := ta.req(http.MethodPost, "/api/v1/auth/invite/redeem")
+	r.Body = io.NopCloser(strings.NewReader(`{"token":"` + raw + `"}`))
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Idempotency-Key", "key-1")
+	rec := ta.do(r)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("deleted-user invite redeem = %d, want 404 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetSessionDeletedUser verifies a session whose user was deleted is a 401.
+// Note: the middleware chain rejects a deleted user's session before the
+// handler; the handler's 401 branch is covered directly by
+// TestHandlerGetSessionDeletedUser.
+func TestGetSessionDeletedUser(t *testing.T) {
+	ta := newTestAPI(t)
+	u := seedTenantUser(t, ta.s, "identity", "alice")
+	tok := createSession(t, ta.s, u.ID, time.Hour)
+	if err := ta.s.DeleteUser(context.Background(), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec := ta.do(ta.cookieReq(http.MethodGet, "/api/v1/auth/session", tok))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("get session after delete = %d, want 401", rec.Code)
+	}
+}
+
+// TestRefreshSessionNoCookieToken verifies refresh with a cookie but no
+// resolvable token is a 401.
+func TestRefreshSessionMissingToken(t *testing.T) {
+	ta := newTestAPI(t)
+	u := seedTenantUser(t, ta.s, "identity", "alice")
+	// Create a cookie session but delete the row so lookup fails.
+	tok := createSession(t, ta.s, u.ID, time.Hour)
+	_ = tok
+	sess, err := ta.s.GetSessionByTokenHash(context.Background(), store.HashSessionToken(tok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ta.s.RevokeSession(context.Background(), sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec := ta.do(ta.cookieReq(http.MethodPost, "/api/v1/auth/session/refresh", "missing-token"))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh with missing session = %d, want 401", rec.Code)
+	}
+}
+
+// TestRefreshSessionRevoked verifies refreshing a revoked session is a 401.
+func TestRefreshSessionRevoked(t *testing.T) {
+	ta := newTestAPI(t)
+	u := seedTenantUser(t, ta.s, "identity", "alice")
+	tok := createSession(t, ta.s, u.ID, time.Hour)
+	sess, err := ta.s.GetSessionByTokenHash(context.Background(), store.HashSessionToken(tok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ta.s.RevokeSession(context.Background(), sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	rec := ta.do(ta.cookieReq(http.MethodPost, "/api/v1/auth/session/refresh", tok))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh revoked = %d, want 401", rec.Code)
+	}
+}
+
+// TestRefreshSessionExpired verifies refreshing an expired session is a 401.
+func TestRefreshSessionExpired(t *testing.T) {
+	ta := newTestAPI(t)
+	u := seedTenantUser(t, ta.s, "identity", "alice")
+	tok := createSession(t, ta.s, u.ID, -time.Hour)
+	rec := ta.do(ta.cookieReq(http.MethodPost, "/api/v1/auth/session/refresh", tok))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh expired = %d, want 401", rec.Code)
+	}
+}
+
+// TestDeleteSessionMissingRow verifies the handler 204 path when the session
+// row is gone. The middleware chain rejects a revoked session first, so this
+// branch is exercised directly via TestHandlerDeleteSessionMissingRow.
+// (Removed the chain-level variant: authn rejects a revoked session as 401
+// before DeleteSession is reached.)
+
+// directHandler builds a v1auth.Handler with a nil WebAuthn handler and a
+// discard logger, so tests can drive handler error paths directly without the
+// middleware chain.
+func directHandler(t *testing.T, s *store.Store, key *rsa.PrivateKey) *v1auth.Handler {
+	t.Helper()
+	return v1auth.New(s, key, testIssuer, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+// principalCtxRequest wraps r with an injected principal context.
+func principalCtxRequest(t *testing.T, r *http.Request, p *middleware.Principal) *http.Request {
+	t.Helper()
+	return r.WithContext(middleware.WithPrincipal(r.Context(), p))
+}
+
+// TestHandlerRefreshSessionRevoked drives the RefreshSession handler error path
+// directly (bypassing the authn middleware which would already reject it).
+func TestHandlerRefreshSessionRevoked(t *testing.T) {
+	s := testStore(t)
+	u := seedTenantUser(t, s, "identity", "alice")
+	tok := createSession(t, s, u.ID, time.Hour)
+	sess, err := s.GetSessionByTokenHash(context.Background(), store.HashSessionToken(tok))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.RevokeSession(context.Background(), sess.ID); err != nil {
+		t.Fatal(err)
+	}
+	h := directHandler(t, s, testKey(t))
+	req := principalCtxRequest(t, httptest.NewRequest(http.MethodPost, "/session/refresh", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
+	req.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: tok})
+	rec := httptest.NewRecorder()
+	h.RefreshSession(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh revoked = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerRefreshSessionExpired drives the expired-session refresh path.
+func TestHandlerRefreshSessionExpired(t *testing.T) {
+	s := testStore(t)
+	u := seedTenantUser(t, s, "identity", "alice")
+	tok := createSession(t, s, u.ID, -time.Hour)
+	h := directHandler(t, s, testKey(t))
+	req := principalCtxRequest(t, httptest.NewRequest(http.MethodPost, "/session/refresh", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
+	req.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: tok})
+	rec := httptest.NewRecorder()
+	h.RefreshSession(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh expired = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerRefreshSessionMissingToken drives refresh with a cookie principal
+// but no resolvable session token.
+func TestHandlerRefreshSessionMissingToken(t *testing.T) {
+	s := testStore(t)
+	u := seedTenantUser(t, s, "identity", "alice")
+	h := directHandler(t, s, testKey(t))
+	req := principalCtxRequest(t, httptest.NewRequest(http.MethodPost, "/session/refresh", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
+	// No session cookie set -> token == "".
+	rec := httptest.NewRecorder()
+	h.RefreshSession(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh no token = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerRefreshSessionUnknownRow drives refresh where the session lookup
+// fails.
+func TestHandlerRefreshSessionUnknownRow(t *testing.T) {
+	s := testStore(t)
+	u := seedTenantUser(t, s, "identity", "alice")
+	h := directHandler(t, s, testKey(t))
+	req := principalCtxRequest(t, httptest.NewRequest(http.MethodPost, "/session/refresh", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
+	req.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: "unknown-token"})
+	rec := httptest.NewRecorder()
+	h.RefreshSession(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh unknown row = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerDeleteSessionMissingRow drives delete where the session row is
+// gone: it must still clear the cookie and return 204.
+func TestHandlerDeleteSessionMissingRow(t *testing.T) {
+	s := testStore(t)
+	u := seedTenantUser(t, s, "identity", "alice")
+	h := directHandler(t, s, testKey(t))
+	req := principalCtxRequest(t, httptest.NewRequest(http.MethodDelete, "/session", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
+	req.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: "gone-token"})
+	rec := httptest.NewRecorder()
+	h.DeleteSession(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete missing row = %d, want 204", rec.Code)
+	}
+}
+
+// TestHandlerDeleteSessionRevokes drives the delete path that revokes a live
+// session row.
+func TestHandlerDeleteSessionRevokes(t *testing.T) {
+	s := testStore(t)
+	u := seedTenantUser(t, s, "identity", "alice")
+	tok := createSession(t, s, u.ID, time.Hour)
+	h := directHandler(t, s, testKey(t))
+	req := principalCtxRequest(t, httptest.NewRequest(http.MethodDelete, "/session", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
+	req.AddCookie(&http.Cookie{Name: v1auth.SessionCookie, Value: tok})
+	rec := httptest.NewRecorder()
+	h.DeleteSession(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete live session = %d, want 204", rec.Code)
+	}
+	sess, err := s.GetSessionByTokenHash(context.Background(), store.HashSessionToken(tok))
+	if err != nil || sess.RevokedAt == nil {
+		t.Fatalf("session not revoked: err=%v sess=%+v", err, sess)
+	}
+}
+
+// TestHandlerRegisterBeginUnauthenticated drives register-begin with no
+// principal.
+func TestHandlerRegisterBeginUnauthenticated(t *testing.T) {
+	s := testStore(t)
+	h := directHandler(t, s, testKey(t))
+	rec := httptest.NewRecorder()
+	h.RegisterBegin(rec, httptest.NewRequest(http.MethodPost, "/register/begin", http.NoBody))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("register begin no principal = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerRegisterFinishNoPrincipal drives register-finish with no
+// principal.
+func TestHandlerRegisterFinishNoPrincipal(t *testing.T) {
+	s := testStore(t)
+	h := directHandler(t, s, testKey(t))
+	rec := httptest.NewRecorder()
+	h.RegisterFinish(rec, httptest.NewRequest(http.MethodPost, "/register/finish", http.NoBody))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("register finish no principal = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerGetSessionNoPrincipal drives GetSession with no principal.
+func TestHandlerGetSessionNoPrincipal(t *testing.T) {
+	s := testStore(t)
+	h := directHandler(t, s, testKey(t))
+	rec := httptest.NewRecorder()
+	h.GetSession(rec, httptest.NewRequest(http.MethodGet, "/session", http.NoBody))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("get session no principal = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerGetSessionDeletedUser drives GetSession where the user row is gone.
+func TestHandlerGetSessionDeletedUser(t *testing.T) {
+	s := testStore(t)
+	u := seedTenantUser(t, s, "identity", "alice")
+	if err := s.DeleteUser(context.Background(), u.ID); err != nil {
+		t.Fatal(err)
+	}
+	h := directHandler(t, s, testKey(t))
+	req := principalCtxRequest(t, httptest.NewRequest(http.MethodGet, "/session", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
+	rec := httptest.NewRecorder()
+	h.GetSession(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("get session deleted user = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerRefreshSessionNoPrincipal drives RefreshSession with no principal.
+func TestHandlerRefreshSessionNoPrincipal(t *testing.T) {
+	s := testStore(t)
+	h := directHandler(t, s, testKey(t))
+	rec := httptest.NewRecorder()
+	h.RefreshSession(rec, httptest.NewRequest(http.MethodPost, "/session/refresh", http.NoBody))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh no principal = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerRefreshSessionBearer drives RefreshSession with a bearer (non-
+// cookie) principal: must be 401.
+func TestHandlerRefreshSessionBearer(t *testing.T) {
+	s := testStore(t)
+	u := seedTenantUser(t, s, "identity", "alice")
+	h := directHandler(t, s, testKey(t))
+	req := principalCtxRequest(t, httptest.NewRequest(http.MethodPost, "/session/refresh", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: false})
+	rec := httptest.NewRecorder()
+	h.RefreshSession(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("refresh bearer principal = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerDeleteSessionNoPrincipal drives DeleteSession with no principal.
+func TestHandlerDeleteSessionNoPrincipal(t *testing.T) {
+	s := testStore(t)
+	h := directHandler(t, s, testKey(t))
+	rec := httptest.NewRecorder()
+	h.DeleteSession(rec, httptest.NewRequest(http.MethodDelete, "/session", http.NoBody))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("delete session no principal = %d, want 401", rec.Code)
+	}
+}
+
+// TestHandlerDeleteSessionNoToken drives DeleteSession with a cookie principal
+// but no session cookie.
+func TestHandlerDeleteSessionNoToken(t *testing.T) {
+	s := testStore(t)
+	u := seedTenantUser(t, s, "identity", "alice")
+	h := directHandler(t, s, testKey(t))
+	req := principalCtxRequest(t, httptest.NewRequest(http.MethodDelete, "/session", http.NoBody), &middleware.Principal{UserID: u.ID, IsCookie: true})
+	rec := httptest.NewRecorder()
+	h.DeleteSession(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("delete session no token = %d, want 401", rec.Code)
+	}
+}
+
 func TestBrowserInviteSessionFlow(t *testing.T) {
 	ta := newTestAPI(t)
 	u := seedTenantUser(t, ta.s, "identity", "alice")
@@ -576,6 +954,36 @@ func TestLoginFinishMintsSession(t *testing.T) {
 	_ = json.Unmarshal(sessRec.Body.Bytes(), &p)
 	if p.UserID != u.ID {
 		t.Fatalf("login session user = %q, want %q", p.UserID, u.ID)
+	}
+}
+
+// TestLoginFinishInvalidChallenge drives the login-finish failure path: an
+// anonymous POST with no valid begin session must yield 400.
+func TestLoginFinishInvalidChallenge(t *testing.T) {
+	ta := newTestAPI(t)
+	u := seedTenantUser(t, ta.s, "identity", "alice")
+	_ = u
+	r := ta.req(http.MethodPost, "/api/v1/auth/webauthn/login/finish?challenge=missing")
+	r.Body = io.NopCloser(strings.NewReader(`{}`))
+	r.Header.Set("Content-Type", "application/json")
+	rec := ta.do(r)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("login finish invalid challenge = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRegisterFinishInvalidChallenge drives the register-finish failure path:
+// an authenticated user with no valid begin session must yield 400.
+func TestRegisterFinishInvalidChallenge(t *testing.T) {
+	ta := newTestAPI(t)
+	u := seedTenantUser(t, ta.s, "identity", "alice")
+	tok := createSession(t, ta.s, u.ID, time.Hour)
+	r := ta.cookieReq(http.MethodPost, "/api/v1/auth/webauthn/register/finish?challenge=missing", tok)
+	r.Body = io.NopCloser(strings.NewReader(`{}`))
+	r.Header.Set("Content-Type", "application/json")
+	rec := ta.do(r)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("register finish invalid challenge = %d, want 400 (body %s)", rec.Code, rec.Body.String())
 	}
 }
 
