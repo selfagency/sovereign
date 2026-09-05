@@ -1,12 +1,14 @@
 package auth
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"sync"
 	"time"
 
+	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
 
 	"github.com/selfagency/sovereign/internal/store"
@@ -142,7 +144,24 @@ func (h *WebAuthnHandler) userFromRequest(r *http.Request) (*User, error) {
 	if err != nil {
 		return nil, errors.New("unknown user")
 	}
-	creds, err := h.store.ListWebAuthnCredentials(r.Context(), su.ID)
+	return h.authUserFromStore(su)
+}
+
+// loadUserByID loads a user by ID and populates their WebAuthn credentials,
+// mirroring userFromRequest but keyed on the authenticated user ID rather than
+// a client-supplied handle. This is the B11 fix: registration derives the
+// user from the authenticated session, never from a ?handle= query param.
+func (h *WebAuthnHandler) loadUserByID(userID string) (*User, error) {
+	su, err := h.store.UserByID(context.Background(), userID)
+	if err != nil {
+		return nil, errors.New("unknown user")
+	}
+	return h.authUserFromStore(su)
+}
+
+// authUserFromStore wraps a store user with its WebAuthn credentials.
+func (h *WebAuthnHandler) authUserFromStore(su *store.User) (*User, error) {
+	creds, err := h.store.ListWebAuthnCredentials(context.Background(), su.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +174,97 @@ func (h *WebAuthnHandler) userFromRequest(r *http.Request) (*User, error) {
 		user.Credentials = append(user.Credentials, wc)
 	}
 	return user, nil
+}
+
+// BeginRegistrationUser starts passkey registration for an explicit user ID
+// (derived from the authenticated session) and stores the begin session. It
+// returns the creation options for the client.
+func (h *WebAuthnHandler) BeginRegistrationUser(userID string) (*protocol.CredentialCreation, *webauthn.SessionData, error) {
+	user, err := h.loadUserByID(userID)
+	if err != nil {
+		return nil, nil, err
+	}
+	creation, session, err := h.wa.BeginRegistration(user)
+	if err != nil {
+		return nil, nil, err
+	}
+	h.session.Put(session.Challenge, session)
+	return creation, session, nil
+}
+
+// FinishRegistrationUser validates an attestation for an explicit user ID and
+// persists the credential. It reads the begin session (challenge) and the
+// credential response from the request. On success the caller is responsible
+// for marking passkey setup complete.
+func (h *WebAuthnHandler) FinishRegistrationUser(userID string, r *http.Request) error {
+	user, err := h.loadUserByID(userID)
+	if err != nil {
+		return err
+	}
+	session, err := h.sessionFromRequest(r)
+	if err != nil {
+		return err
+	}
+	cred, err := h.wa.FinishRegistration(user, session, r)
+	if err != nil {
+		return err
+	}
+	data, err := json.Marshal(cred)
+	if err != nil {
+		return err
+	}
+	if err := h.store.AddWebAuthnCredential(r.Context(), &store.WebAuthnCredential{
+		ID:           string(cred.ID),
+		UserID:       user.ID,
+		CredentialID: cred.ID,
+		PublicKey:    cred.PublicKey,
+		SignCount:    cred.Authenticator.SignCount,
+		Data:         data,
+	}); err != nil {
+		return err
+	}
+	h.session.Delete(session.Challenge)
+	return nil
+}
+
+// BeginLoginUniform starts a client-side discoverable (passkey) login that
+// does not require a known user up front. The returned assertion options have
+// an identical shape whether or not the caller names a real handle, so an
+// unknown handle cannot be enumerated. It stores the begin session by
+// challenge and returns the assertion options.
+func (h *WebAuthnHandler) BeginLoginUniform() (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
+	assertion, session, err := h.wa.BeginDiscoverableLogin()
+	if err != nil {
+		return nil, nil, err
+	}
+	h.session.Put(session.Challenge, session)
+	return assertion, session, nil
+}
+
+// FinishLoginUniform validates a discoverable assertion, resolves the user
+// from the credential, and returns the authenticated user ID. It reads the
+// begin session (challenge) and the assertion response from the request.
+func (h *WebAuthnHandler) FinishLoginUniform(r *http.Request) (string, error) {
+	session, err := h.sessionFromRequest(r)
+	if err != nil {
+		return "", err
+	}
+	resolver := func(rawID, userHandle []byte) (*User, error) {
+		cred, err := h.store.GetWebAuthnCredential(r.Context(), rawID)
+		if err != nil {
+			return nil, err
+		}
+		return h.loadUserByID(cred.UserID)
+	}
+	user, cred, err := h.wa.FinishPasskeyLogin(resolver, session, r)
+	if err != nil {
+		return "", err
+	}
+	if err := h.store.UpdateWebAuthnSignCount(r.Context(), string(cred.ID), cred.Authenticator.SignCount); err != nil {
+		return "", err
+	}
+	h.session.Delete(session.Challenge)
+	return user.ID, nil
 }
 
 // sessionFromRequest loads the begin/finish session by challenge.

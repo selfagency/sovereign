@@ -13,6 +13,11 @@ import (
 	"time"
 
 	"github.com/selfagency/sovereign/internal/admin"
+	"github.com/selfagency/sovereign/internal/api"
+	"github.com/selfagency/sovereign/internal/api/dto"
+	"github.com/selfagency/sovereign/internal/api/middleware"
+	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
+	"github.com/selfagency/sovereign/internal/api/v1/meta"
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/endpoints"
 	"github.com/selfagency/sovereign/internal/mail"
@@ -43,6 +48,9 @@ type Server struct {
 	mailer    mail.Sender
 	mux       http.Handler
 	logger    *slog.Logger
+	// apiClose stops the control-plane middleware chain's background goroutines
+	// (idempotency pruner) on Close.
+	apiClose func()
 }
 
 // New assembles the server from config: opens the SQLite store, builds the
@@ -119,8 +127,12 @@ func seedIdentityTenant(ctx context.Context, st *store.Store, host string) error
 	})
 }
 
-// Close releases the store.
+// Close releases the store and stops the control-plane middleware chain's
+// background goroutines.
 func (s *Server) Close() error {
+	if s.apiClose != nil {
+		s.apiClose()
+	}
 	return s.store.Close()
 }
 
@@ -309,6 +321,14 @@ func (s *Server) buildRouter() error {
 		// IPFS pinning broker, behind the admin guard.
 		identity.Handle("/ipfs/pin", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.pin)))
 		identity.Handle("/ipfs/pin/", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.status)))
+		// Control-plane REST API (/api/v1), mounted on the identity host. It
+		// shares the host with the OIDC provider at "/"; the distinct /api/v1
+		// prefix keeps the two surfaces from colliding.
+		apiHandler, err := s.apiHandler(waHandler)
+		if err != nil {
+			return fmt.Errorf("api handler: %w", err)
+		}
+		identity.Handle("/api/v1/", apiHandler)
 		root = hostRouter{
 			identityHost: identityHost,
 			identity:     identity,
@@ -336,6 +356,51 @@ func (h hostRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.other.ServeHTTP(w, r)
+}
+
+// apiHandler builds the /api/v1 control-plane handler with the real meta
+// dependencies (capabilities, version, ping) and wires the middleware chain
+// config from the server config. The returned lifecycle is stored so Close
+// stops its background goroutines.
+func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, error) {
+	// The honest wired-feature list: authn/identity plumbing is live; data-plane
+	// features stay false until their wiring lands in Phase 3/4.
+	capabilities := dto.Capabilities{
+		Backup:   false,
+		Atproto:  false,
+		Solid:    false,
+		IPFS:     false,
+		Proofs:   false,
+		WebAuthn: true,
+		OIDC:     true,
+	}
+
+	// /ready pings the SQLite store; unreachable store fails closed with 503.
+	ping := func(ctx context.Context) error { return s.store.DB().PingContext(ctx) }
+
+	h := meta.New(
+		meta.WithCapabilities(capabilities),
+		meta.WithVersion(meta.VersionInfo{Version: s.version}),
+		meta.WithPing(ping),
+	)
+
+	ah := v1auth.New(s.store, s.authStore.SigningKeyMaterial(), "https://id."+s.cfg.Domain, waHandler, s.logger)
+
+	routes := api.ToRouteInfo(api.RoutesForAPI(h, ah))
+	life := middleware.NewHandler(&middleware.ChainConfig{
+		Routes:        routes,
+		Logger:        s.logger,
+		SigningKey:    s.authStore.SigningKeyMaterial(),
+		Issuer:        "https://id." + s.cfg.Domain,
+		SessionCookie: "session",
+		Sessions:      s.store,
+		Users:         s.store,
+		DualRead:      s.cfg.Auth.Session.DualRead,
+		CORSOrigins:   s.cfg.API.CORSOrigins,
+		BodyLimit:     middleware.DefaultMaxBodyBytes,
+	})
+	s.apiClose = life.Close
+	return life, nil
 }
 
 // tenantStore resolves a host to a tenant from the SQLite store.

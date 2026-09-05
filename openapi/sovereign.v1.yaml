@@ -1,0 +1,347 @@
+openapi: 3.1.0
+info:
+  title: Sovereign REST API
+  version: "1.0.0"
+  description: |
+    Control-plane API for Sovereign tenants. Hand-written source of truth
+    (D-5): the route set in internal/api/router.go must stay in parity with
+    this spec in both directions, enforced by the OpenAPI drift test.
+servers:
+  - url: https://id.<domain>/api/v1
+    description: Identity host, versioned API base.
+paths:
+  /meta/capabilities:
+    get:
+      operationId: getCapabilities
+      summary: Machine-readable wired features
+      security: []
+      responses:
+        "200":
+          description: Capabilities object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Capabilities"
+  /meta/version:
+    get:
+      operationId: getVersion
+      summary: Build version
+      security: []
+      responses:
+        "200":
+          description: Build version
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Version"
+  /health:
+    get:
+      operationId: getHealth
+      summary: Liveness probe
+      security: []
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /ready:
+    get:
+      operationId: getReady
+      summary: Readiness probe
+      security: []
+      responses:
+        "200":
+          description: Ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /openapi.json:
+    get:
+      operationId: getOpenAPI
+      summary: Serve the embedded OpenAPI spec
+      security: []
+      responses:
+        "200":
+          description: OpenAPI 3.1 document
+          content:
+            application/json:
+              schema:
+                type: object
+  /auth/invite/redeem:
+    post:
+      operationId: redeemInvite
+      summary: Exchange an invite token for a session (programmatic)
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InviteRedeemRequest"
+      responses:
+        "200":
+          description: Session established
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/Problem"
+  /auth/session:
+    get:
+      operationId: getSession
+      summary: Current principal, tenant, scopes, onboarding state
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Current session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteSession
+      summary: Revoke the current session
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "204":
+          description: Session revoked
+        "401":
+          $ref: "#/components/responses/Problem"
+  /auth/session/refresh:
+    post:
+      operationId: refreshSession
+      summary: Sliding renewal of the current session
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Renewed session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /auth/webauthn/register/begin:
+    post:
+      operationId: webauthnRegisterBegin
+      summary: Begin WebAuthn registration (session-derived user)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Registration options
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebAuthnOptions"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /auth/webauthn/register/finish:
+    post:
+      operationId: webauthnRegisterFinish
+      summary: Finish WebAuthn registration
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebAuthnFinishRequest"
+      responses:
+        "200":
+          description: Credential registered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebAuthnResult"
+        "400":
+          $ref: "#/components/responses/Problem"
+  /auth/webauthn/login/begin:
+    post:
+      operationId: webauthnLoginBegin
+      summary: Begin WebAuthn login (anonymous, uniform for unknown handles)
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebAuthnLoginBeginRequest"
+      responses:
+        "200":
+          description: Assertion options
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebAuthnOptions"
+  /auth/webauthn/login/finish:
+    post:
+      operationId: webauthnLoginFinish
+      summary: Finish WebAuthn login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WebAuthnFinishRequest"
+      responses:
+        "200":
+          description: Session established
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Session"
+        "400":
+          $ref: "#/components/responses/Problem"
+  /invite/{token}:
+    get:
+      operationId: inviteBrowser
+      summary: Redeem a magic-link token into a session cookie and redirect to the panel (anonymous)
+      description: >
+        Anonymous browser entry point (M1). Redeems the one-time invite token,
+        creates a NEW server-side session, sets the opaque session cookie, and
+        303-redirects to /panel. The token is single-use and persisted only as a
+        hash; token-in-URL Referer/access-log leaks are acknowledged under the
+        project's PII discipline.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "303":
+          description: Session cookie set; redirect to /panel
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: session
+  responses:
+    Problem:
+      description: RFC 9457 problem details
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    Problem:
+      type: object
+      description: RFC 9457 problem details
+      required: [type, title, status]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+        status:
+          type: integer
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/FieldError"
+    FieldError:
+      type: object
+      required: [field, code]
+      properties:
+        field:
+          type: string
+        code:
+          type: string
+        detail:
+          type: string
+    User:
+      type: object
+      required: [id, handle]
+      properties:
+        id:
+          type: string
+        handle:
+          type: string
+        display_name:
+          type: string
+        is_admin:
+          type: boolean
+    Session:
+      type: object
+      required: [user, scopes]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        tenant:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        onboarding:
+          type: object
+    Capabilities:
+      type: object
+      additionalProperties: true
+    Version:
+      type: object
+      required: [version]
+      properties:
+        version:
+          type: string
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded]
+    InviteRedeemRequest:
+      type: object
+      required: [token]
+      properties:
+        token:
+          type: string
+    WebAuthnOptions:
+      type: object
+      additionalProperties: true
+    WebAuthnLoginBeginRequest:
+      type: object
+      properties:
+        handle:
+          type: string
+    WebAuthnFinishRequest:
+      type: object
+      additionalProperties: true
+    WebAuthnResult:
+      type: object
+      additionalProperties: true

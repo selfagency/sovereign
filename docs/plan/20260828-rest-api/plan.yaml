@@ -365,7 +365,7 @@ tasks:
     description: "Implement internal/api/problem package: RFC 9457 application/problem+json type + mapper. Stable problem URIs under https://<domain>/problems/: invalid-request, validation-failed, unauthenticated, insufficient-scope, forbidden, not-found, conflict, precondition-required, precondition-failed, payload-too-large, rate-limited, not-implemented, internal."
     wave: 5
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [D-3, problem-details, errors]
     dependencies: []
@@ -392,7 +392,7 @@ tasks:
     description: "Implement internal/api/dto package: typed DTOs (snake_case JSON, RFC 3339 Z timestamps). Admin lists use {data,offset,limit,total}; audit log uses {data,next_cursor} (opaque cursor = base64(sort_key,id)). No map[string]any in any response."
     wave: 5
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [G, dto, typing, C4]
     dependencies: []
@@ -420,7 +420,7 @@ tasks:
     description: "Hand-write openapi/sovereign.v1.yaml (source of truth, D-5). Add kin-openapi test-only dep. Bidirectional drift test: route-set <-> spec parity both directions; must fail on a deliberately-omitted route."
     wave: 5
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [D-5, openapi, contract]
     dependencies: []
@@ -448,7 +448,7 @@ tasks:
     description: "Implement internal/api/router.go route table using stdlib net/http.ServeMux Go 1.22+ patterns (D-2). Every route declares its required scope AND its per-route timeout in the route table. No router dependency."
     wave: 6
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [D-2, routing, route-table, M4]
     dependencies: [T1.1, T1.2]
@@ -476,7 +476,7 @@ tasks:
     description: "Implement full middleware chain: request-id -> panic-recover -> body-limit -> per-route timeout (route-table column; backup run/restore declared long-running) -> CORS (api.cors_origins allowlist) -> rate-limit (per-IP only) -> authn (bearer XOR cookie, audience-checked; dual-read format-sniffed, both formats -> 400) -> CSRF (cookie principals, unsafe methods; hidden csrf_token field for form-encoded no-JS POSTs) -> scope authz (table-driven, coarse scopes) -> conditional-request (ETag on GET only; no mandatory If-Match) -> idempotency (invite + backup run/restore) -> handler -> problem+json mapper -> access log. Bearer+cookie together -> 400."
     wave: 6
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [D-6, middleware, authn, authz, security, M4, M6, C2, C3, C5, C6, R2]
     dependencies: [T0.3, T0.4, T0.7]
@@ -507,7 +507,7 @@ tasks:
     description: "Implement GET /api/v1/meta/capabilities, /meta/version, /health, /ready, /openapi.json (from embedded spec)."
     wave: 7
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [meta, health, ready]
     dependencies: [T1.3, T1.4]
@@ -536,7 +536,7 @@ tasks:
     description: "Implement POST /auth/invite/redeem (invite token, exchange-only for programmatic), GET /auth/session, POST /auth/session/refresh (sliding renewal), DELETE /auth/session (revoke current), POST /auth/webauthn/register/begin|finish (session-derived user, NOT ?handle=), POST /auth/webauthn/login/begin|finish (anon, uniform response for unknown handles). GET /invite/{token} is an ANONYMOUS route (exempt from authn middleware): it redeems the token, mints a SESSION cookie, and 303s to /panel. 'Exchange-only' applies to the programmatic redeem, not the browser GET. Token-in-URL leaks via Referer/access logs (acknowledged under PII discipline)."
     wave: 7
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [auth, session, webauthn, invite, M1]
     dependencies: [T1.3, T1.4]
@@ -568,7 +568,7 @@ tasks:
     description: "Independent critic review of the authn/authz model (bearer XOR cookie, coarse scope taxonomy exact-match, audience separation D-8, middleware chain order, config-gated dual-read) before endpoints build on it. Challenge edge cases, over-engineering, logic gaps."
     wave: 7
     agent: gem-critic
-    status: pending
+    status: completed
     phase: 1
     covers: [security-review, authn, authz]
     dependencies: [T1.4]
@@ -587,7 +587,7 @@ tasks:
     description: "Mount the /api/v1 router (T1.3) into the running server (cmd/sovereign/server.go). Wire the middleware chain (T1.4) and register the router on the identity host. This task OWNS server.go assembly; other endpoint tasks register routes into the router, not directly into server.go."
     wave: 7
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 1
     covers: [server-assembly, wiring, R5]
     dependencies: [T1.3, T1.4]
@@ -615,7 +615,7 @@ tasks:
     description: "Verify foundation: drift test fails on deliberately-omitted route, middleware order test, no-route-without-scope test, server assembly smoke test. Gate before Phase 2/3 endpoint work."
     wave: 8
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 1
     covers: [verification, gate]
     dependencies: [T1.3, T1.4, T1.5, T1.6, T1.7, T1.9, T1.10]

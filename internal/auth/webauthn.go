@@ -45,6 +45,42 @@ func (w *WebAuthn) FinishRegistration(u *User, session *webauthn.SessionData, r 
 	return w.wa.FinishRegistration(user, *session, r)
 }
 
+// BeginDiscoverableLogin starts a client-side discoverable (passkey) login,
+// which does not require a known user up front. It returns assertion options
+// whose shape is identical for every caller, so an unknown handle cannot be
+// distinguished from a known one (no user enumeration). This is the uniform
+// login path used by the anonymous login/begin endpoint.
+func (w *WebAuthn) BeginDiscoverableLogin() (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
+	assertion, session, err := w.wa.BeginDiscoverableLogin()
+	if err != nil {
+		return nil, nil, err
+	}
+	return assertion, session, nil
+}
+
+// FinishPasskeyLogin validates a discoverable-login assertion against a
+// handler that resolves the authenticated user from the credential, returning
+// the user and the validated credential. The handler receives the credential's
+// raw ID and the user handle from the authenticator response and must return
+// an *auth.User (with Credentials populated) or an error; it is invoked when
+// the client-side discoverable login does not identify the user up front.
+func (w *WebAuthn) FinishPasskeyLogin(handler func(rawID, userHandle []byte) (*User, error), session *webauthn.SessionData, r *http.Request) (*User, *webauthn.Credential, error) {
+	adapt := func(rawID, userHandle []byte) (webauthn.User, error) {
+		u, err := handler(rawID, userHandle)
+		if err != nil {
+			return nil, err
+		}
+		return &webauthnUser{u: u}, nil
+	}
+	user, cred, err := w.wa.FinishPasskeyLogin(adapt, *session, r)
+	if err != nil {
+		return nil, nil, err
+	}
+	// The resolved user carries the ID/handle/display name from the store;
+	// Credentials are populated by the caller's handler as needed.
+	return &User{ID: string(user.WebAuthnID()), Handle: user.WebAuthnName(), DisplayName: user.WebAuthnDisplayName()}, cred, nil
+}
+
 // BeginLogin starts passkey login for a user, returning assertion options.
 func (w *WebAuthn) BeginLogin(u *User) (*protocol.CredentialAssertion, *webauthn.SessionData, error) {
 	user := &webauthnUser{u: u}
