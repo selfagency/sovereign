@@ -43,6 +43,30 @@ func TestCapabilitiesHonest(t *testing.T) {
 	}
 }
 
+func TestCapabilitiesFromProvider(t *testing.T) {
+	// A capabilities provider derives the map from actual wiring at request
+	// time and takes precedence over the static set.
+	h := New(
+		WithCapabilities(dto.Capabilities{WebAuthn: true}),
+		WithCapabilitiesProvider(func() map[string]dto.Capability {
+			return map[string]dto.Capability{
+				"ipfs": {Wired: true, Description: "IPFS pinning broker"},
+			}
+		}),
+	)
+	rec := serve(h.Capabilities)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	var got map[string]dto.Capability
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got) != 1 || !got["ipfs"].Wired || got["ipfs"].Description == "" {
+		t.Errorf("provider capabilities = %+v, want derived ipfs entry", got)
+	}
+}
+
 func TestCapabilitiesAllOff(t *testing.T) {
 	// A zero-value capability set reports everything false.
 	h := New()

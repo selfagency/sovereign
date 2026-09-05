@@ -27,9 +27,13 @@ type VersionInfo struct {
 // Handler serves the anonymous meta/health/ready/openapi routes.
 type Handler struct {
 	capabilities dto.Capabilities
-	version      VersionInfo
-	ping         func(ctx context.Context) error
-	spec         []byte
+	// capabilitiesProvider, when set, derives the wired-feature map from actual
+	// wiring at request time. It takes precedence over the static capabilities
+	// set when both are present.
+	capabilitiesProvider func() map[string]dto.Capability
+	version              VersionInfo
+	ping                 func(ctx context.Context) error
+	spec                 []byte
 }
 
 // Option configures a Handler. The zero Handler is usable but reports no
@@ -40,6 +44,13 @@ type Option func(*Handler)
 // WithCapabilities sets the wired-feature report served at /meta/capabilities.
 func WithCapabilities(c dto.Capabilities) Option {
 	return func(h *Handler) { h.capabilities = c }
+}
+
+// WithCapabilitiesProvider sets a provider that derives the wired-feature map
+// from actual wiring (config + store) at request time. It takes precedence
+// over WithCapabilities when both are set.
+func WithCapabilitiesProvider(p func() map[string]dto.Capability) Option {
+	return func(h *Handler) { h.capabilitiesProvider = p }
 }
 
 // WithVersion stamps the /meta/version build info.
@@ -74,8 +85,14 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
-// Capabilities serves the machine-readable list of wired features.
+// Capabilities serves the machine-readable list of wired features. When a
+// capabilities provider is wired, it returns the dynamically derived map;
+// otherwise it returns the static capability set.
 func (h *Handler) Capabilities(w http.ResponseWriter, _ *http.Request) {
+	if h.capabilitiesProvider != nil {
+		writeJSON(w, http.StatusOK, h.capabilitiesProvider())
+		return
+	}
 	writeJSON(w, http.StatusOK, h.capabilities)
 }
 

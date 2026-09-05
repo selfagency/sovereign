@@ -16,6 +16,7 @@ import (
 	"github.com/selfagency/sovereign/internal/api"
 	"github.com/selfagency/sovereign/internal/api/dto"
 	"github.com/selfagency/sovereign/internal/api/middleware"
+	"github.com/selfagency/sovereign/internal/api/v1/admin/capabilities"
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
 	"github.com/selfagency/sovereign/internal/auth"
@@ -357,23 +358,21 @@ func (h hostRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // config from the server config. The returned lifecycle is stored so Close
 // stops its background goroutines.
 func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, error) {
-	// The honest wired-feature list: authn/identity plumbing is live; data-plane
-	// features stay false until their wiring lands in Phase 3/4.
-	capabilities := dto.Capabilities{
-		Backup:   false,
-		Atproto:  false,
-		Solid:    false,
-		IPFS:     false,
-		Proofs:   false,
-		WebAuthn: true,
-		OIDC:     true,
-	}
+	// Derive the wired-feature set from actual wiring (config + store), not a
+	// static list. This is the source of truth for NodeInfo and the README
+	// status table (Phase 4).
+	capProvider := capabilities.New(capabilities.Config{
+		IPFSEnabled: s.cfg.IPFS.Enabled,
+		SMTPEnabled: s.cfg.SMTP.Enabled(),
+	}, s.store)
 
 	// /ready pings the SQLite store; unreachable store fails closed with 503.
 	ping := func(ctx context.Context) error { return s.store.DB().PingContext(ctx) }
 
 	h := meta.New(
-		meta.WithCapabilities(capabilities),
+		meta.WithCapabilitiesProvider(func() map[string]dto.Capability {
+			return capProvider.Features()
+		}),
 		meta.WithVersion(meta.VersionInfo{Version: s.version}),
 		meta.WithPing(ping),
 	)

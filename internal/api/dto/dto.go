@@ -164,6 +164,14 @@ type ToSDocument struct {
 	PublishedBy string    `json:"published_by"`
 }
 
+// Capability describes one wired feature: whether it is actually wired and a
+// short human-readable description. The /meta/capabilities endpoint returns a
+// map of these keyed by feature name, derived from actual wiring.
+type Capability struct {
+	Wired       bool   `json:"wired"`
+	Description string `json:"description"`
+}
+
 // Capabilities reports which protocol features are actually wired up.
 type Capabilities struct {
 	Backup   bool `json:"backup"`

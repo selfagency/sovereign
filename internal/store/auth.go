@@ -540,6 +540,19 @@ func (s *Store) SetClientSecret(ctx context.Context, id, secret string) error {
 	return nil
 }
 
+// DeleteClient removes an OIDC client by ID. Returns ErrNotFound when the
+// client does not exist.
+func (s *Store) DeleteClient(ctx context.Context, id string) error {
+	res, err := s.db.ExecContext(ctx, `DELETE FROM clients WHERE id = ?`, id)
+	if err != nil {
+		return fmt.Errorf("store: delete client: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ClientByID returns an OIDC client by ID.
 func (s *Store) ClientByID(ctx context.Context, id string) (*Client, error) {
 	row := s.db.QueryRowContext(ctx,
