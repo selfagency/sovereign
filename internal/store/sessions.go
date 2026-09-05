@@ -151,6 +151,18 @@ func (s *Store) RevokeUserSessions(ctx context.Context, userID string) error {
 	return nil
 }
 
+// RevokeUserSessionsExcept revokes every active session for a user except the
+// one identified by keepID. An empty keepID revokes all of the user's sessions.
+func (s *Store) RevokeUserSessionsExcept(ctx context.Context, userID, keepID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL AND id != ?`,
+		time.Now().UTC(), userID, keepID)
+	if err != nil {
+		return fmt.Errorf("store: revoke user sessions except: %w", err)
+	}
+	return nil
+}
+
 // ListUserSessions returns all session rows for a user.
 func (s *Store) ListUserSessions(ctx context.Context, userID string) ([]Session, error) {
 	rows, err := s.db.QueryContext(ctx,

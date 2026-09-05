@@ -40,8 +40,8 @@ type Session struct {
 	LastSeenAt    *time.Time `json:"last_seen_at"`
 	ExpiresAt     time.Time  `json:"expires_at"`
 	RevokedAt     *time.Time `json:"revoked_at"`
-	UserAgentHash string     `json:"user_agent_hash"`
-	IPHash        string     `json:"ip_hash"`
+	UserAgentHash string     `json:"user_agent_hash,omitempty"`
+	IPHash        string     `json:"ip_hash,omitempty"`
 }
 
 // Principal is the authenticated identity returned by GET /auth/session. It
