@@ -1,0 +1,762 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# PLAN METADATA
+# ═══════════════════════════════════════════════════════════════════════════
+plan_id: 20260828-steps5-8-hardening
+objective: "Implement remediation Steps 5-8 of the exhaustive sovereign review: web-surface security (Step5), storage correctness (Step6), wire-or-delete dead features (Step7), and typing hygiene (Step8). HIGH complexity, security-sensitive, cross-domain, breaking changes."
+created_at: "2026-08-28T00:00:00Z"
+created_by: gem-planner
+status: pending
+tldr: |
+  4 steps across 8 subsystem clusters. 21 tasks / 4 waves. Step5 web surface batched in one pass (shared middleware). Step6 storage correctness lands before Step7 backup wiring. Step7 wire-or-delete: 8 WIRE, 1 DELETE, 4 DOCUMENT-NOT-WIRED. Step8 typing independent, last. OIDC E1 substantial (persist auth state, userinfo/introspection/session termination). server.go is the single integration point — all wire tasks edit it; flagged conflicts_with and sequenced.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PLAN-LEVEL METRICS
+# ═══════════════════════════════════════════════════════════════════════════
+plan_metrics:
+  wave_1_task_count: 7
+  total_dependencies: 18
+  risk_score: high
+quality_warnings:
+  - "server.go is the single integration point; 9 tasks (T1,T4,T5,T6,T7,T8,T9,T10,T11,T15) edit it. Wave 3 wire tasks (T5-T11) all touch server.go — must be applied sequentially; conflicts_with flagged."
+  - "Wiring backup (T5) and atproto (T6) re-adds config keys (backup.*, atproto.*) that Step 1 strict config removed. This reverses a prior decision — flagged as decision_blocker Q1."
+  - "ToSGate (T10) is redundant with the panel's inline ToS enforcement (panel_e2e_test.go). Wire as middleware or confirm panel path is sufficient."
+  - "Coverage gate 80% per-package: atproto, storage, proofs, moderation, auth all touched. T16 verifies no package drops below 80%."
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PLANNING ANALYSIS (HIGH complexity)
+# ═══════════════════════════════════════════════════════════════════════════
+open_questions:
+  - question: "Wiring backup (T5) and atproto (T6) requires re-adding config keys (backup.*, atproto.*) that Step 1 strict config explicitly removed. Is the config-surface reversal acceptable, or should these stay DOCUMENT-NOT-WIRED?"
+    context: "prior_decisions removed backup.* and atproto.* keys; config.example.yml has neither. README marks both as claimed capabilities (Backup/restore, AT Protocol PDS). Wiring them is a breaking-change reversal of Step 1."
+    type: decision_blocker
+    affects: [T5, T6]
+  - question: "ToSGate (T10) is dead middleware; the panel already enforces ToS inline (panel_e2e_test.go POST /panel/tos). Should ToSGate be wired as middleware on /panel/*, or is the inline panel check sufficient (making ToSGate DELETE)?"
+    context: "C2 says ToSGate exempts /admin/tos which does not exist. The real ToS route is /panel/tos, already enforced by the panel handler. Wiring ToSGate risks double-enforcement."
+    type: decision_blocker
+    affects: [T10]
+  - question: "ipfspin.NewPSAClient (T11): add ipfs.mode=kubo|psa config surface, or DOCUMENT-NOT-WIRED? README marks IPFS pinning Partial (PSA mode not wired)."
+    context: "NewKuboRPC is wired (ipfs.go). NewPSAClient is the pinning-service API mode. Adding mode config is small but adds surface."
+    type: decision_blocker
+    affects: [T11]
+
+assumptions:
+  - "Wiring backup/atproto re-adds their config keys; operators who removed them per Step 1 must re-add them. Documented as breaking-change migration."
+  - "WAC enforcement (T7) makes world-readable Solid resources fail-closed (403) unless ACL grants public access via acl:agentClass foaf:Agent. Documented."
+  - "OIDC userinfo/introspection (T14) now return real claims (was empty) — behavior change for RPs. Documented."
+  - "CSRF enforcement on /panel/* (T1) breaks scripted clients. Documented."
+  - "Rate limiting / MaxBytesReader (T1) changes behavior on large uploads. Documented."
+  - "MemoryAuditLog (T12) is superseded by StoreAuditLog (wired at server.go:270); safe to delete."
+  - "setup/licenses/keys/chatfederation (T13) are library-only utilities with zero importers; keep and document not-wired (matches CHANGELOG)."
+  - "E2E tests go through server.Server (internal/server/e2e_test.go + e2e_harness_test.go), not package APIs."
+
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: "server.go merge conflicts cascade across wave 3 wire tasks (T5-T11 all edit it), blocking integration."
+      likelihood: high
+      impact: critical
+      mitigation: "Flag conflicts_with; coordination_notes require sequential server.go hunk application; reviewer R3 gates wave 3."
+    - scenario: "Wiring backup/atproto re-adds removed config keys, breaking strict-config startup for existing deployments."
+      likelihood: high
+      impact: high
+      mitigation: "decision_blocker Q1; breaking-change migration note; config.example.yml updated in same task."
+    - scenario: "WAC fail-closed (T7) locks out legitimate Solid users who relied on world-readable access."
+      likelihood: medium
+      impact: high
+      mitigation: "Public access opt-in via acl:agentClass foaf:Agent; breaking-change note; E2E test for both authed and public paths."
+    - scenario: "OIDC E1 (T14) persistence introduces TTL/cleanup bugs or breaks existing token issuance."
+      likelihood: medium
+      impact: high
+      mitigation: "Verify zitadel/oidc/v3 signatures via go doc before implementing; TDD; concurrency tests for code-map."
+    - scenario: "SSRF hardening (T8 proofs) misses a rebinding window or redirect hop, leaving a bypass."
+      likelihood: medium
+      impact: critical
+      mitigation: "SSRF suite (blocked ranges, redirect hops, DNS rebinding, oversized body) in acceptance criteria; reviewer R3."
+    - scenario: "Coverage drops below 80% in a touched package (atproto, storage, proofs, moderation, auth), failing the gate."
+      likelihood: medium
+      impact: medium
+      mitigation: "T16 coverage-budget task runs scripts/coverage-gate.sh and fixes below-80% packages."
+
+coordination_notes:
+  - "server.go is the single integration point. Wave 3 wire tasks (T5-T11) each add a small additive server.go hunk (mount handler + config wiring). Apply sequentially: orchestrator runs them one at a time within wave 3, or a single implementer applies all server.go wiring in one coordinated pass. Do NOT run T5-T11 in parallel on server.go."
+  - "T1 (Step5) batches CSRF + rate-limit + size limits + timeouts in one pass because they share middleware and server.go. Do not split."
+  - "T2 (fs) and T3 (s3) are independent (fs.go vs s3.go) and can run in parallel in wave 1."
+  - "T4 (B1 secure) must land after T1 (server.go) and T3 (s3.go); it touches both."
+  - "T5 (backup) depends on T2 (crash-safe fs) and T3 (s3 streaming) — backups need a crash-safe backend."
+  - "T6 (atproto) A5 blob tenant prefix depends on storage backend correctness (T2/T3/T4)."
+  - "T14 (OIDC E1): verify zitadel/oidc/v3 API signatures via go doc before implementing — flagged unverified in original review."
+  - "Every wire task must include an E2E test through server.Server proving the README/CHANGELOG claim maps to a live route + passing test (docs-verify gate)."
+
+contracts:
+  - from_task: T2
+    to_task: T5
+    interface: "storage.Backend.Put must be crash-safe (temp+rename+fsync); FSDestination.WriteBackup relies on it."
+    format: "Go interface storage.Backend; backup.FSDestination consumes it."
+  - from_task: T3
+    to_task: T5
+    interface: "s3.Put must stream (no io.ReadAll); S3Destination.WriteBackup relies on streaming."
+    format: "Go storage.Backend; backup.S3Destination consumes it."
+  - from_task: T4
+    to_task: T5
+    interface: "S3Config.Secure (default true) propagated to NewS3; S3Destination must honor secure."
+    format: "Go struct server.S3Config; storage.NewS3 signature."
+  - from_task: T4
+    to_task: T6
+    interface: "S3Config.Secure propagated to atproto blob backend (A5 tenant prefix)."
+    format: "Go server.S3Config; atproto.XRPCServer.Backend func(tenantID) storage.Backend."
+  - from_task: T7
+    to_task: T1
+    interface: "WACChecker replaces wiring.ACLChecker; fail-closed default. T1 CSRF middleware must not break Solid authed writes."
+    format: "Go solid.ACLChecker interface; wiring.WACChecker impl."
+  - from_task: T14
+    to_task: T1
+    interface: "OIDC auth-request/code persistence with TTL; T1 rate-limit must not break authorize/token flows."
+    format: "Go internal/auth/sqlstore.go SQLStore methods."
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TASKS
+# ═══════════════════════════════════════════════════════════════════════════
+tasks:
+  # ─────────────────────────────────────────────────────────────────────────
+  # WAVE 1 — Step5 web surface (batched), Step6 storage, Step7 delete/doc/OIDC, critic
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T1
+    title: "Step5: Harden web surface (CSRF, passkey, admin auth, SMTP, webauthn, indieauth, rate-limit)"
+    description: "Batch all Step5 web-surface findings in one pass (shared middleware + server.go). B9: add CSRF token + Origin validation middleware for cookie-authenticated POSTs on /panel/tos, /panel/passkey, /panel/profile (SameSite=Lax insufficient for sibling subdomains). B13: AdminGuard is bearer-only but renders HTML forms — pick session+cookie+CSRF or API-only JSON for /admin/*. B10: PasskeySetup set true on any authed POST without credential verification — derive from ListCredentials or set only in RegisterFinish. B2: SMTP header injection in admin/users.go + mail/mail.go — reject CRLF / validate RFC 5321 email before interpolating into To:. B11: WebAuthn endpoints trust client-supplied handle (mounted unauthenticated) — RegisterFinish re-binds challenge; prevent handle enumeration. B12: IndieAuth — state reused as auth code, codes not invalidated, no consent, string-concat redirect, me from token request, session not deleted. B14: add rate limiting + request-size limits (MaxBytesReader on forms/PUT) + http.Server IdleTimeout/ReadHeaderTimeout."
+    wave: 1
+    agent: gem-implementer
+    status: pending
+    covers: [B9, B10, B13, B2, B11, B12, B14]
+    dependencies: []
+    conflicts_with: [T4, T15]
+    context_files:
+      - path: internal/server/server.go
+        description: "Router assembly, http.Server config, middleware mount points."
+      - path: internal/server/panel.go
+        description: "Cookie-authed POST handlers (tos, passkey, profile)."
+      - path: internal/server/indieauth.go
+        description: "IndieAuth auth/token handlers (B12)."
+      - path: internal/auth/webauthn_handler.go
+        description: "WebAuthn register/login handlers (B10, B11)."
+      - path: internal/admin/users.go
+        description: "SMTP header injection (B2)."
+      - path: internal/mail/mail.go
+        description: "SMTP send path (B2)."
+    acceptance_criteria:
+      - "CSRF rejection test on every cookie-authenticated mutation (/panel/tos, /panel/passkey, /panel/profile, /admin/*)."
+      - "PasskeySetup only set on verified RegisterFinish or derived from ListCredentials; negative test for unverified POST."
+      - "SMTP: email with CRLF rejected; RFC 5321 validation; negative test."
+      - "WebAuthn: client-supplied handle not trusted; RegisterFinish re-binds challenge; handle enumeration prevented; negative test."
+      - "IndieAuth: state not reused as auth code, codes invalidated, consent required, no string-concat redirect, me not from token request, session deleted; negative tests."
+      - "Rate limiting + MaxBytesReader on forms/PUT; http.Server has IdleTimeout + ReadHeaderTimeout."
+      - "AdminGuard usable (session+cookie+CSRF or API-only JSON); E2E through server.Server."
+    success_criteria:
+      - "task lint test vet pass; go test ./... -race green."
+      - "CSRF rejection tests pass; SSRF/oversized-body suite passes."
+      - "E2E tests through server.Server for /panel/* and /admin/*."
+    tech_stack: [Go, net/http, zitadel/oidc, go-webauthn]
+    test_coverage: "Maintain >=80% in server, admin, mail, auth packages."
+    handoff:
+      do_not_reinvestigate:
+        - "Steps 1-4 already merged (8183953) — do not redo."
+        - "Strict config baseline (Step 1) — do not remove unknown-key rejection."
+      required_test_first: "CSRF rejection test on /panel/tos POST without token (RED), then implement middleware."
+      target_files: [internal/server/server.go, internal/server/panel.go, internal/server/indieauth.go, internal/auth/webauthn_handler.go, internal/admin/users.go, internal/mail/mail.go]
+      minimal_change: "Additive middleware + handler guards; do not refactor unrelated routes."
+      acceptance_checks: ["task lint", "task vet", "go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T2
+    title: "Step6: fs.go crash-safe Put + path-traversal/symlink hardening"
+    description: "D1: fs.go Put not crash-safe (no temp+rename+fsync), metadata write unsynced, Get ignores sidecar errors, List returns empty content types, ctx ignored. D2: fs.go + prefixed.go path traversal / symlink — path.Join keys, need filepath.Clean + prefix verify + os.OpenInRoot (Go 1.24+) + reject control chars."
+    wave: 1
+    agent: gem-implementer
+    status: pending
+    covers: [D1, D2]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/storage/fs.go
+        description: "Filesystem backend (D1, D2)."
+      - path: internal/storage/prefixed.go
+        description: "Tenant prefix wrapper (D2)."
+    acceptance_criteria:
+      - "Put is crash-safe: temp file + rename + fsync; metadata write synced."
+      - "Get surfaces sidecar errors; List returns correct content types; ctx honored."
+      - "Path traversal + symlink fuzz against FS + Prefixed passes; control chars rejected; os.OpenInRoot used."
+    success_criteria:
+      - "go test ./... -race green; path-traversal + symlink fuzz suite passes."
+      - "storage package >=80% coverage."
+    tech_stack: [Go, os, filepath]
+    test_coverage: "storage package >=80%."
+    handoff:
+      do_not_reinvestigate: ["Steps 1-4 merged; storage backend interface unchanged."]
+      required_test_first: "Crash-safety test: Put then simulate crash (no fsync) -> data intact (RED), then implement temp+rename+fsync."
+      target_files: [internal/storage/fs.go, internal/storage/prefixed.go]
+      minimal_change: "Harden existing Put/Get/List; do not change Backend interface."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T3
+    title: "Step6: s3.go stream Put + ctx/timeout + opt-in bucket creation"
+    description: "D3: s3.go Put buffers entire object in memory (io.ReadAll before PutObject) — stream with size=-1 or enforce MaxBytesReader. D4: NewS3 does network I/O + bucket creation during construction with context.Background(), no timeout — accept ctx, dial timeout, opt-in bucket creation."
+    wave: 1
+    agent: gem-implementer
+    status: pending
+    covers: [D3, D4]
+    dependencies: []
+    conflicts_with: [T4]
+    context_files:
+      - path: internal/storage/s3.go
+        description: "S3 backend (D3, D4)."
+    acceptance_criteria:
+      - "Put streams (no io.ReadAll); oversized body rejected via MaxBytesReader."
+      - "NewS3 accepts ctx + dial timeout; bucket creation opt-in; no context.Background() in construction."
+    success_criteria:
+      - "go test ./... -race green; storage package >=80%."
+    tech_stack: [Go, minio-go]
+    test_coverage: "storage package >=80%."
+    handoff:
+      do_not_reinvestigate: ["minio-go already in go.mod; verify API via go doc."]
+      required_test_first: "Streaming test: large object Put does not buffer whole body in memory (RED), then implement streaming."
+      target_files: [internal/storage/s3.go]
+      minimal_change: "Change Put to stream; NewS3 signature gains ctx + timeout."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T12
+    title: "Step7: Delete moderation.MemoryAuditLog (superseded)"
+    description: "C1: moderation.MemoryAuditLog is dead code superseded by StoreAuditLog (wired at server.go:270). Delete the type and its tests. Verify no importers remain."
+    wave: 1
+    agent: gem-implementer
+    status: pending
+    covers: [C1]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/moderation/store_audit.go
+        description: "Contains MemoryAuditLog (delete) and StoreAuditLog (keep)."
+    acceptance_criteria:
+      - "MemoryAuditLog type and its tests removed; no importers remain; build green."
+    success_criteria:
+      - "go test ./... -race green; moderation package >=80%."
+    tech_stack: [Go]
+    test_coverage: "moderation package >=80%."
+    handoff:
+      do_not_reinvestigate: ["StoreAuditLog is wired and must remain."]
+      required_test_first: "N/A (deletion) — verify no test references MemoryAuditLog before removing."
+      target_files: [internal/moderation/store_audit.go]
+      minimal_change: "Delete only MemoryAuditLog; keep StoreAuditLog."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T13
+    title: "Step7: Document not-wired library utilities (setup, licenses, keys, chatfederation)"
+    description: "C1: internal/setup, internal/licenses, internal/keys (pgp/ssh), internal/protocols/chatfederation (localpart) are library-only utilities with zero importers. Keep them; document as NOT-WIRED in README capability table + CHANGELOG (already partially documented). Verify docs-verify gate stays green."
+    wave: 1
+    agent: gem-documentation-writer
+    status: pending
+    covers: [C1]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: README.md
+        description: "Capability table — mark these as Not wired."
+      - path: CHANGELOG.md
+        description: "Already documents these as Not wired; verify consistency."
+    acceptance_criteria:
+      - "README capability table + CHANGELOG explicitly mark setup/licenses/keys/chatfederation as Not wired (library-only, no HTTP route)."
+      - "docs-verify gate (task docs-verify) passes."
+    success_criteria:
+      - "task docs-verify green."
+    task_type: documentation
+    audience: developers
+    coverage_matrix: [README, CHANGELOG]
+    handoff:
+      do_not_reinvestigate: ["CHANGELOG already lists these as Not wired; align README."]
+      required_test_first: "N/A (docs)."
+      target_files: [README.md, CHANGELOG.md]
+      minimal_change: "Documentation only; no code change."
+      acceptance_checks: ["task docs-verify"]
+
+  - id: T14
+    title: "Step7: OIDC E1 — persist auth requests/codes with TTL, implement userinfo/introspection/session termination"
+    description: "E1: OIDC SQLStore auth requests/codes in-memory only, DeleteAuthRequest leaks code->ID map, CreateAccessToken no metadata, TerminateSession no-op, userinfo/introspection empty. Persist auth requests/codes with TTL, implement userinfo/introspection/session termination. VERIFY zitadel/oidc/v3 API signatures via go doc before implementing (flagged unverified in original review)."
+    wave: 1
+    agent: gem-implementer
+    status: pending
+    covers: [E1]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/auth/sqlstore.go
+        description: "SQLStore — persist auth state, userinfo/introspection, session termination."
+    acceptance_criteria:
+      - "Auth requests/codes persisted with TTL; DeleteAuthRequest does not leak code->ID map."
+      - "CreateAccessToken stores metadata; TerminateSession actually terminates."
+      - "userinfo/introspection return real claims (was empty)."
+      - "Concurrency test for code-map (no race on shared state)."
+    success_criteria:
+      - "go test ./... -race green; auth package >=80%."
+      - "E2E through server.Server: authorize -> token -> userinfo returns claims."
+    tech_stack: [Go, zitadel/oidc/v3, modernc.org/sqlite]
+    test_coverage: "auth package >=80%."
+    handoff:
+      do_not_reinvestigate: ["Verify zitadel/oidc/v3 signatures via go doc before coding — do not assume API."]
+      required_test_first: "Persistence test: auth request survives store reopen (RED), then implement TTL persistence."
+      target_files: [internal/auth/sqlstore.go]
+      minimal_change: "Extend SQLStore; do not change OIDC provider interface."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: C1
+    title: "Critic: challenge wire/delete/document decisions for Step7 dead features"
+    description: "Challenge the wire/delete/document decisions for every C1 dead item before wave 3 wire tasks execute. Verify each decision against AGENTS.md in/out-of-scope, README capability table, and prior decisions. Surface any decision that should flip (e.g. backup/atproto config reversal, ToSGate redundancy, PSA mode)."
+    wave: 1
+    agent: gem-critic
+    status: pending
+    covers: [C1]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: README.md
+        description: "Capability table — source of truth for claimed features."
+      - path: CHANGELOG.md
+        description: "Documents not-wired items."
+    acceptance_criteria:
+      - "Produces a verdict on each C1 decision: WIRE (backup, atproto, WAC, proofs, sigverify, ToSGate, PSA), DELETE (MemoryAuditLog), DOCUMENT-NOT-WIRED (setup/licenses/keys/chatfederation)."
+      - "Flags any decision that conflicts with AGENTS.md scope or prior decisions."
+    success_criteria:
+      - "Verdict recorded; wave 3 wire tasks proceed only after critic sign-off."
+    handoff:
+      do_not_reinvestigate: ["AGENTS.md in/out-of-scope boundary; prior_decisions in context envelope."]
+      required_test_first: "N/A (analysis)."
+      target_files: []
+      minimal_change: "Analysis only; no code."
+      acceptance_checks: ["Verdict documented in plan logs."]
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # WAVE 2 — S3 secure config, typing, review wave 1
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T4
+    title: "Step6: S3 secure config propagation (B1)"
+    description: "B1: S3 Secure never propagated from config (defaults false -> plaintext HTTP). Add secure (default true) to server.S3Config, reject https:// scheme in endpoint, allow_insecure override. Propagate to NewS3."
+    wave: 2
+    agent: gem-implementer
+    status: pending
+    covers: [B1]
+    dependencies: [T3]
+    conflicts_with: [T1, T15]
+    context_files:
+      - path: internal/server/config.go
+        description: "Add Secure field to S3Config."
+      - path: internal/server/server.go
+        description: "Propagate secure to NewS3."
+      - path: internal/storage/s3.go
+        description: "Honor secure in NewS3."
+    acceptance_criteria:
+      - "S3Config.Secure defaults true; endpoint with https:// scheme rejected; allow_insecure override works."
+      - "NewS3 honors secure; plaintext HTTP only with explicit override."
+    success_criteria:
+      - "go test ./... -race green; config strictness test still rejects unknown keys."
+    tech_stack: [Go, minio-go]
+    test_coverage: "server + storage >=80%."
+    handoff:
+      do_not_reinvestigate: ["Strict config baseline (Step 1) — keep unknown-key rejection."]
+      required_test_first: "Config test: S3Config.Secure defaults true (RED), then implement."
+      target_files: [internal/server/config.go, internal/server/server.go, internal/storage/s3.go]
+      minimal_change: "Add Secure field + propagation; do not change other config."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T15
+    title: "Step8: Typing hygiene — replace 'any', named structs, nosniff/Cache-Control, surface encoder errors"
+    description: "G: 36 'any' occurrences. map[string]any response literals -> named structs (didDocHandler, atproto/xrpc_server.go). Annotate justified external-boundary any. Add nosniff + Cache-Control headers, surface encoder errors."
+    wave: 2
+    agent: gem-implementer
+    status: pending
+    covers: [G]
+    dependencies: []
+    conflicts_with: [T4]
+    context_files:
+      - path: internal/server/server.go
+        description: "didDocHandler, response headers."
+      - path: internal/protocols/atproto/xrpc_server.go
+        description: "map[string]any response literals."
+    acceptance_criteria:
+      - "any inventory reduced to justified external-boundary cases, each annotated."
+      - "map[string]any response literals -> named structs."
+      - "nosniff + Cache-Control headers on responses; encoder errors surfaced."
+    success_criteria:
+      - "go test ./... -race green; any inventory audit passes."
+    tech_stack: [Go]
+    test_coverage: "server + atproto >=80%."
+    handoff:
+      do_not_reinvestigate: ["Do not change response wire format — only types."]
+      required_test_first: "N/A (typing) — verify existing tests still pass after type change."
+      target_files: [internal/server/server.go, internal/protocols/atproto/xrpc_server.go]
+      minimal_change: "Type-only changes; no behavior change."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: R1
+    title: "Review wave 1 (security-sensitive: CSRF, SMTP, webauthn, indieauth, storage, OIDC)"
+    description: "Full security review of wave 1 changes: CSRF middleware, SMTP header injection, webauthn handle enumeration, indieauth, rate-limit, fs crash-safety, s3 streaming, OIDC persistence. Verify acceptance criteria met, no IDOR/SSRF regressions, coverage maintained."
+    wave: 2
+    agent: gem-reviewer
+    status: pending
+    dependencies: [T1, T2, T3, T12, T13, T14]
+    conflicts_with: []
+    context_files:
+      - path: internal/server/server.go
+        description: "Wave 1 web-surface changes."
+      - path: internal/storage/fs.go
+        description: "Crash-safety + traversal."
+      - path: internal/storage/s3.go
+        description: "Streaming + ctx."
+      - path: internal/auth/sqlstore.go
+        description: "OIDC persistence."
+    acceptance_criteria:
+      - "All wave 1 acceptance criteria verified; no security regressions."
+      - "IDOR tests for keys/proofs/blobs/Solid/remoteStorage pass."
+      - "SSRF suite passes (blocked ranges, redirect hops, DNS rebinding, oversized body)."
+    success_criteria:
+      - "Review verdict: pass; wave 3 may proceed."
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    handoff:
+      do_not_reinvestigate: ["Steps 1-4 baseline; wave 1 scope only."]
+      required_test_first: "N/A (review)."
+      target_files: []
+      minimal_change: "Review only; no code."
+      acceptance_checks: ["Review verdict recorded."]
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # WAVE 3 — Wire-or-delete implementation (server.go sequential), review wave 2
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T5
+    title: "Step7: Wire backup.Scheduler (A3) — re-add backup.* config, construct Scheduler, surface Status"
+    description: "A3: Backup config is a no-op (Apply just logs, returns 200 'saved'). Scheduler never constructed. Wire: re-add backup.* config (schedule, destination, prefix), persist config, construct Destination (FS/S3), start Scheduler, surface Status. Depends on crash-safe storage (T2/T3) and S3 secure (T4)."
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers: [A3, C1]
+    dependencies: [T2, T3, T4]
+    conflicts_with: [T6, T7, T8, T9, T10, T11]
+    context_files:
+      - path: internal/server/config.go
+        description: "Re-add backup.* config keys."
+      - path: internal/server/server.go
+        description: "Construct Scheduler, mount Status."
+      - path: internal/admin/backup.go
+        description: "Apply persists config; construct Destination."
+      - path: internal/backup/scheduler.go
+        description: "Scheduler + FSDestination/S3Destination."
+    acceptance_criteria:
+      - "backup.* config re-added; Apply persists config; Scheduler constructed and started."
+      - "Status surfaces last run + last error."
+      - "E2E through server.Server: admin sets backup config, Status reflects it."
+    success_criteria:
+      - "go test ./... -race green; backup + admin + server >=80%."
+    tech_stack: [Go, cron]
+    test_coverage: "backup, admin, server >=80%."
+    handoff:
+      do_not_reinvestigate: ["backup.* keys were removed in Step 1 — re-add deliberately (decision_blocker Q1)."]
+      required_test_first: "Scheduler test: Start runs backup on schedule (RED), then wire."
+      target_files: [internal/server/config.go, internal/server/server.go, internal/admin/backup.go, internal/backup/scheduler.go]
+      minimal_change: "Wire existing Scheduler; do not rewrite backup logic."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T6
+    title: "Step7: Wire atproto PDS (A4, A5, A6, A7) — re-add atproto.* config, RepoFactory, SigningKey, blob prefix, DAG-CBOR, DID resolution"
+    description: "A4: atproto PDS wired with nil Backend/RepoFactory/SigningKey -> 6/8 XRPC methods broken. Wire backendFor, per-tenant RepoFactory under DataDir, SigningKey. A5: fix blob tenant prefix (was deferred from Step 2). A6: records capped at 255 bytes (fixed 0x58 CBOR header) — encode as proper DAG-CBOR maps via indigo/ipld-go-ipld-prime. A7: getProfile never resolves DIDs — add GetTenantByDID or delete branch + reject DID input."
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers: [A4, A5, A6, A7, C1]
+    dependencies: [T4]
+    conflicts_with: [T5, T7, T8, T9, T10, T11]
+    context_files:
+      - path: internal/server/config.go
+        description: "Re-add atproto.* config keys."
+      - path: internal/server/server.go
+        description: "Wire Backend, RepoFactory, SigningKey."
+      - path: internal/protocols/atproto/xrpc_server.go
+        description: "Backend/RepoFactory/SigningKey wiring, getProfile DID."
+      - path: internal/protocols/atproto/repo.go
+        description: "DAG-CBOR record encoding (A6)."
+      - path: internal/protocols/atproto/blob.go
+        description: "Blob tenant prefix (A5)."
+    acceptance_criteria:
+      - "atproto.* config re-added; Backend, per-tenant RepoFactory, SigningKey wired."
+      - "Blob tenant prefix fixed (A5)."
+      - "Records encoded as proper DAG-CBOR maps (A6); >255-byte records work."
+      - "getProfile resolves DIDs or rejects DID input (A7)."
+      - "E2E through server.Server: atproto repo write + blob + getProfile."
+    success_criteria:
+      - "go test ./... -race green; atproto + server >=80%."
+    tech_stack: [Go, bluesky-social/indigo, ipld-go-ipld-prime]
+    test_coverage: "atproto, server >=80%."
+    handoff:
+      do_not_reinvestigate: ["atproto.* keys were removed in Step 1 — re-add deliberately (decision_blocker Q1). Verify indigo/ipld API via go doc."]
+      required_test_first: "DAG-CBOR test: record >255 bytes round-trips (RED), then implement proper encoding."
+      target_files: [internal/server/config.go, internal/server/server.go, internal/protocols/atproto/xrpc_server.go, internal/protocols/atproto/repo.go, internal/protocols/atproto/blob.go]
+      minimal_change: "Wire existing atproto; fix blob prefix + record encoding + DID resolution."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T7
+    title: "Step7: Wire solid.WACChecker fail-closed (B5)"
+    description: "B5: WAC (internal/protocols/solid/wac.go) dead code. Wired ACLChecker permits all unauth reads by design. Wire WACChecker fail-closed, public access opt-in via acl:agentClass foaf:Agent. Replace wiring.ACLChecker with WACChecker."
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers: [B5, C1]
+    dependencies: []
+    conflicts_with: [T5, T6, T8, T9, T10, T11]
+    context_files:
+      - path: internal/wiring/wiring.go
+        description: "Replace ACLChecker with WACChecker."
+      - path: internal/protocols/solid/wac.go
+        description: "WACChecker implementation."
+      - path: internal/server/server.go
+        description: "Mount WACChecker."
+    acceptance_criteria:
+      - "WACChecker fail-closed: unauth reads 403 unless ACL grants public access via acl:agentClass foaf:Agent."
+      - "Authed Solid writes still work (no regression from T1 CSRF)."
+      - "E2E through server.Server: public + authed Solid paths."
+    success_criteria:
+      - "go test ./... -race green; solid + wiring + server >=80%."
+    tech_stack: [Go]
+    test_coverage: "solid, wiring, server >=80%."
+    handoff:
+      do_not_reinvestigate: ["Breaking change: world-readable Solid becomes 403 unless ACL grants public access. Document."]
+      required_test_first: "WAC test: unauth read of resource without public ACL -> 403 (RED), then implement fail-closed."
+      target_files: [internal/wiring/wiring.go, internal/protocols/solid/wac.go, internal/server/server.go]
+      minimal_change: "Wire existing WACChecker; replace ACLChecker."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T8
+    title: "Step7: Wire proofs verifier with SSRF hardening (B6)"
+    description: "B6: Proof verification never wired (no caller). Verifier SSRF: hostFromURL manual parse, DNS resolve before request (rebinding window), no redirect-hop revalidation, single Read no status/content-type check, substring matching. Wire verifier into /.well-known/proofs with full SSRF hardening."
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers: [B6, C1]
+    dependencies: []
+    conflicts_with: [T5, T6, T7, T9, T10, T11]
+    context_files:
+      - path: internal/proofs/verify.go
+        description: "Verifier — SSRF hardening + wiring."
+      - path: internal/server/server.go
+        description: "Wire verifier into proofs endpoint."
+    acceptance_criteria:
+      - "Verifier wired into /.well-known/proofs."
+      - "SSRF hardened: DNS resolve + reject loopback/private/link-local/multicast/cloud-metadata, cap redirects, cap body size, strict timeout, redirect-hop revalidation, status/content-type check, no substring matching."
+      - "SSRF suite passes (blocked ranges, redirect hops, DNS rebinding, oversized body)."
+    success_criteria:
+      - "go test ./... -race green; proofs + server >=80%."
+    tech_stack: [Go, net/http]
+    test_coverage: "proofs, server >=80%."
+    handoff:
+      do_not_reinvestigate: ["Follow existing SSRF pattern in internal/proofs/verify.go; run in background not sync request path."]
+      required_test_first: "SSRF test: proof fetch to loopback/private range blocked (RED), then harden."
+      target_files: [internal/proofs/verify.go, internal/server/server.go]
+      minimal_change: "Wire existing verifier + SSRF hardening."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T9
+    title: "Step7: Wire activitypub HTTP-signature verification (C1)"
+    description: "C1: activitypub sigverify (internal/protocols/activitypub/sigverify.go) is dead code. Claimed in CHANGELOG. Wire HTTP-signature verification into the actor endpoint."
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers: [C1]
+    dependencies: []
+    conflicts_with: [T5, T6, T7, T8, T10, T11]
+    context_files:
+      - path: internal/protocols/activitypub/sigverify.go
+        description: "HTTP-signature verification."
+      - path: internal/server/server.go
+        description: "Wire sigverify into actor endpoint."
+    acceptance_criteria:
+      - "HTTP-signature verification wired into actor endpoint."
+      - "E2E through server.Server: signed request accepted, unsigned rejected."
+    success_criteria:
+      - "go test ./... -race green; activitypub + server >=80%."
+    tech_stack: [Go]
+    test_coverage: "activitypub, server >=80%."
+    handoff:
+      do_not_reinvestigate: ["Do not implement full ActivityPub federation (out of scope, hypernext)."]
+      required_test_first: "Sigverify test: unsigned request rejected (RED), then wire."
+      target_files: [internal/protocols/activitypub/sigverify.go, internal/server/server.go]
+      minimal_change: "Wire existing sigverify; no federation logic."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T10
+    title: "Step7: Wire moderation.ToSGate (C2) — fix exempt path to /panel/tos"
+    description: "C2: ToSGate exempts /admin/tos which doesn't exist. Align exempt path with real /panel/tos. Wire ToSGate as middleware on /panel/* (or confirm inline panel check is sufficient — see decision_blocker Q2)."
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers: [C2, C1]
+    dependencies: []
+    conflicts_with: [T5, T6, T7, T8, T9, T11]
+    context_files:
+      - path: internal/moderation/tos.go
+        description: "ToSGate — fix exempt path."
+      - path: internal/server/server.go
+        description: "Mount ToSGate middleware."
+      - path: internal/server/panel.go
+        description: "Panel ToS enforcement."
+    acceptance_criteria:
+      - "ToSGate exempt path aligned to /panel/tos (or ToSGate wired as middleware on /panel/*)."
+      - "No double-enforcement with inline panel check."
+      - "E2E through server.Server: ToS gate blocks until accepted."
+    success_criteria:
+      - "go test ./... -race green; moderation + server >=80%."
+    tech_stack: [Go]
+    test_coverage: "moderation, server >=80%."
+    handoff:
+      do_not_reinvestigate: ["Panel already enforces ToS inline (panel_e2e_test.go). Resolve Q2 before wiring."]
+      required_test_first: "ToSGate test: exempt path /panel/tos not blocked (RED), then fix."
+      target_files: [internal/moderation/tos.go, internal/server/server.go, internal/server/panel.go]
+      minimal_change: "Fix exempt path + wire middleware; avoid double-enforcement."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: T11
+    title: "Step7: Wire ipfspin.NewPSAClient (C1) — add ipfs.mode config"
+    description: "C1: ipfspin.NewPSAClient is dead code (pinning-service API mode). NewKuboRPC is wired. Add ipfs.mode=kubo|psa config surface and wire PSA client, or DOCUMENT-NOT-WIRED (see decision_blocker Q3)."
+    wave: 3
+    agent: gem-implementer
+    status: pending
+    covers: [C1]
+    dependencies: []
+    conflicts_with: [T5, T6, T7, T8, T9, T10]
+    context_files:
+      - path: internal/server/config.go
+        description: "Add ipfs.mode config."
+      - path: internal/server/ipfs.go
+        description: "Wire PSA client."
+      - path: internal/server/server.go
+        description: "Select backend by mode."
+      - path: internal/protocols/ipfspin/client.go
+        description: "NewPSAClient."
+    acceptance_criteria:
+      - "ipfs.mode=kubo|psa config; PSA client wired when mode=psa."
+      - "E2E through server.Server: /ipfs/pin works in both modes."
+    success_criteria:
+      - "go test ./... -race green; ipfspin + server >=80%."
+    tech_stack: [Go]
+    test_coverage: "ipfspin, server >=80%."
+    handoff:
+      do_not_reinvestigate: ["NewKuboRPC already wired; add PSA mode additively."]
+      required_test_first: "PSA test: NewPSAClient pin request works (RED), then wire."
+      target_files: [internal/server/config.go, internal/server/ipfs.go, internal/server/server.go, internal/protocols/ipfspin/client.go]
+      minimal_change: "Add mode config + wire PSA; keep Kubo path."
+      acceptance_checks: ["go test ./... -race", "scripts/coverage-gate.sh"]
+
+  - id: R2
+    title: "Review wave 2 (S3 secure config, typing)"
+    description: "Review wave 2 changes: S3 secure config propagation (B1), typing hygiene (G). Verify no wire-format change, config strictness maintained, coverage maintained."
+    wave: 3
+    agent: gem-reviewer
+    status: pending
+    dependencies: [T4, T15]
+    conflicts_with: []
+    context_files:
+      - path: internal/server/config.go
+        description: "S3 secure field."
+      - path: internal/server/server.go
+        description: "Typing + secure propagation."
+    acceptance_criteria:
+      - "B1 and G acceptance criteria verified; no wire-format change; config strictness test passes."
+    success_criteria:
+      - "Review verdict: pass."
+    requires_review: true
+    review_depth: standard
+    review_security_sensitive: true
+    handoff:
+      do_not_reinvestigate: ["Wave 2 scope only."]
+      required_test_first: "N/A (review)."
+      target_files: []
+      minimal_change: "Review only."
+      acceptance_checks: ["Review verdict recorded."]
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # WAVE 4 — Review wave 3, coverage budget, E2E claim verification
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: R3
+    title: "Review wave 3 (wire-or-delete: backup, atproto, WAC, proofs, sigverify, ToSGate, PSA)"
+    description: "Full security review of wave 3 wire tasks: backup wiring, atproto PDS, WAC fail-closed, proofs SSRF, sigverify, ToSGate, PSA. Verify SSRF suite, IDOR tests, coverage, no server.go integration regressions."
+    wave: 4
+    agent: gem-reviewer
+    status: pending
+    dependencies: [T5, T6, T7, T8, T9, T10, T11]
+    conflicts_with: []
+    context_files:
+      - path: internal/server/server.go
+        description: "All wave 3 server.go wiring."
+      - path: internal/protocols/atproto/xrpc_server.go
+        description: "atproto wiring."
+      - path: internal/proofs/verify.go
+        description: "SSRF hardening."
+      - path: internal/wiring/wiring.go
+        description: "WACChecker."
+    acceptance_criteria:
+      - "All wave 3 acceptance criteria verified; SSRF suite + IDOR tests pass; no server.go integration regressions."
+    success_criteria:
+      - "Review verdict: pass."
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+    handoff:
+      do_not_reinvestigate: ["Wave 3 scope only."]
+      required_test_first: "N/A (review)."
+      target_files: []
+      minimal_change: "Review only."
+      acceptance_checks: ["Review verdict recorded."]
+
+  - id: T16
+    title: "Coverage budget: verify no package drops below 80%"
+    description: "Run scripts/coverage-gate.sh; identify any package below 80% from the changes (atproto, storage, proofs, moderation, auth, server, admin, backup, solid, wiring, ipfspin, activitypub). Add tests to restore coverage."
+    wave: 4
+    agent: gem-implementer
+    status: pending
+    dependencies: [R3]
+    conflicts_with: []
+    context_files: []
+    acceptance_criteria:
+      - "scripts/coverage-gate.sh passes: total AND per-package >=80%."
+    success_criteria:
+      - "coverage-gate green."
+    tech_stack: [Go]
+    test_coverage: "All touched packages >=80%."
+    handoff:
+      do_not_reinvestigate: ["Coverage gate is enforced in pre-commit + CI; do not bypass."]
+      required_test_first: "N/A (coverage) — add tests for uncovered paths."
+      target_files: []
+      minimal_change: "Tests only; no production behavior change."
+      acceptance_checks: ["scripts/coverage-gate.sh"]
+
+  - id: T17
+    title: "E2E claim verification: every README/CHANGELOG feature claim maps to a passing E2E test"
+    description: "Verify every README capability marked Shipped/Partial and every CHANGELOG feature claim maps to a passing E2E test through server.Server (internal/server/e2e_test.go + e2e_harness_test.go). Extend harness where a claim lacks a test. Run task docs-verify."
+    wave: 4
+    agent: gem-implementer
+    status: pending
+    dependencies: [R3]
+    conflicts_with: []
+    context_files:
+      - path: internal/server/e2e_test.go
+        description: "E2E tests through server.Server."
+      - path: internal/server/e2e_harness_test.go
+        description: "E2E harness."
+      - path: README.md
+        description: "Capability claims."
+    acceptance_criteria:
+      - "Every Shipped/Partial README claim + CHANGELOG claim has a passing E2E test through server.Server."
+      - "task docs-verify green."
+    success_criteria:
+      - "go test ./... -race green; task docs-verify green."
+    tech_stack: [Go]
+    test_coverage: "E2E coverage for all wired claims."
+    handoff:
+      do_not_reinvestigate: ["E2E tests go through server.Server, not package APIs."]
+      required_test_first: "N/A (verification) — add E2E tests for unwired claims."
+      target_files: [internal/server/e2e_test.go, internal/server/e2e_harness_test.go]
+      minimal_change: "Tests + harness extension only."
+      acceptance_checks: ["go test ./... -race", "task docs-verify"]

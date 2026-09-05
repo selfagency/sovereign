@@ -1,0 +1,1474 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# PLAN METADATA
+# ═══════════════════════════════════════════════════════════════════════════
+plan_id: 20260828-rest-api
+objective: Build a versioned JSON REST API (/api/v1) covering every admin and end-user control-plane capability, then reduce the server-rendered panel and admin pages to thin static clients that talk only to that API. Governs and supersedes the admin/panel work in the Steps 5-8 hardening.
+created_at: 2026-08-28T00:00:00Z
+created_by: gem-planner
+status: pending
+tldr: |
+  9-phase migration (Phase 0..8) to a single authoritative /api/v1 surface with
+  thin net/http handlers that call store directly (no internal/core layer; thin
+  orchestration only where cross-store: backup->scheduler, proofs verify,
+  capabilities). Prerequisites P-1..P-5 land first (P-1 scope fix alone in wave 1).
+  Self API (Phase 2) and Admin API (Phase 3) parallelize after Phase 1; panel
+  (Phase 5) and admin (Phase 6) clients parallelize after 2/3. Phase 7 decommissions
+  old HTTP layers behind a feature-parity gate. Phase 8 hardens + documents.
+  50 tasks, 22 waves, HIGH risk.
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PLAN-LEVEL METRICS
+# ═══════════════════════════════════════════════════════════════════════════
+plan_metrics:
+  wave_1_task_count: 1
+  total_dependencies: 83
+  risk_score: high
+quality_warnings:
+  - "P-1 scope rewrite is the single highest-risk change; must land alone (wave 1) with a regression test per existing call site."
+  - "server.go is a shared integration point; T1.10 owns mounting /api/v1; same-wave tasks editing it are flagged conflicts_with."
+  - "10 handler tasks batch in one wave (Phase 2 + Phase 3); disjoint files but heavy dispatch."
+  - "Session dual-read (P-2) is config-gated (auth.session.dual_read, default TRUE); operator must flip to false and drop old JWT cookies after one release."
+  - "GET /invite/{token} is anonymous and mints a session cookie; token-in-URL leaks via Referer/access logs (acknowledged under PII discipline)."
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PLANNING ANALYSIS (HIGH complexity)
+# ═══════════════════════════════════════════════════════════════════════════
+assumptions:
+  - "All D-1..D-9 decisions are signed off and fixed; ADR tasks only document them, they do not re-open them. D-4 is REVISED to 'handlers call store directly; thin orchestration layer only where cross-store'."
+  - "P-1 scopeImplies implication table is small and explicit (e.g. profile:write implies profile:read); exact-match is the default, implications are opt-in per scope."
+  - "No new runtime deps; kin-openapi is test-only. Any runtime dep addition requires justification (GPL-compat, CGO-free)."
+  - "Thin clients use vendored simple.css (D-9); no design-system/token work, so gem-designer is not required for panel/admin clients."
+  - "No browser E2E (USER-APPROVED decision 7); thin-client verification is Go asset/CSP header assertions."
+  - "DELETE /me is request + admin approval, not immediate cascade (USER-APPROVED decision 4); pending_deletions table persists the request."
+  - "admin is INSTANCE-scoped (Step 3); admin:* scopes require BOTH scope AND user.IsAdmin."
+  - "auth.session.dual_read config (default TRUE) gates the P-2 dual-read window; api.cors_origins config gates CORS allowlist. Both added to config.go + config.example.yml (T0.7)."
+  - "Programmatic tokens are self-issued via POST /me/tokens (show-once, scope-subset selection); end_user_programmatic principal retained."
+  - "Per-route timeouts are configurable via a route-table column; backup run/restore declared long-running (not killed by default timeout)."
+pre_mortem:
+  overall_risk_level: high
+  critical_failure_modes:
+    - scenario: "P-1 ScopesContains rewrite regresses permissions (over-grant or lockout) at an existing call site."
+      likelihood: medium
+      impact: critical
+      mitigation: "Land P-1 alone (T0.1, wave 1) with a regression test per existing call site; exact-match default + explicit scopeImplies table; reviewer gate T0.6."
+    - scenario: "P-2 session rework locks users out or leaks sessions across tenants."
+      likelihood: medium
+      impact: critical
+      mitigation: "Dual-read for one release (accept old JWT + new session rows) gated by auth.session.dual_read (default TRUE, fail-safe against lockout); same cookie name, format-sniffed; both formats -> 400; concurrent session-revoke race test in T0.6."
+    - scenario: "CSRF enforcement breaks scripted/bearer clients, misses cookie-principal unsafe methods, or blocks the no-JS form fallback."
+      likelihood: medium
+      impact: high
+      mitigation: "Bearer path exempt by design (D-6); double-submit + Origin/Sec-Fetch-Site; CSRF x method x principal x content-type matrix (incl. form-encoded no-JS POST via hidden csrf_token field, synchronizer-token); document in CHANGELOG (T8.5)."
+    - scenario: "Endpoint sprawl: a route merges with no scope requirement or no OpenAPI entry."
+      likelihood: medium
+      impact: high
+      mitigation: "no-route-without-scope test + bidirectional OpenAPI drift test (D-5) make untested routes structurally hard to merge; enforced at T1.8."
+    - scenario: "Thin client accretes into a de-facto framework (build step, npm, multiple modules)."
+      likelihood: low
+      impact: medium
+      mitigation: "Hard cap: no build step, no npm, one shared module (web/shared/api.js); enforced by asset/CSP tests and reviewer gates T5.5/T6.2."
+    - scenario: "Coverage dilution as handlers grow; store packages fall below 90%."
+      likelihood: medium
+      impact: medium
+      mitigation: "Thin handlers (parse -> call store -> encode); coverage concentrates in store/; per-package gate in T8.6 and scripts/coverage-gate.sh."
+    - scenario: "Decommission (Phase 7) deletes a function with no API/client surface, or leaves dead code / html/template outside web/ and hyperlink."
+      likelihood: low
+      impact: medium
+      mitigation: "T7.1 feature-parity gate enumerates every function in panel.go + admin/{users,backup}.go and asserts each maps to an API endpoint + client surface before deletion; T7.2 deadcode clean + html/template audit; reviewer gate T7.3."
+    - scenario: "Long-running backup restore killed by default per-route timeout."
+      likelihood: low
+      impact: high
+      mitigation: "Per-route timeout is a route-table column; backup run/restore declared long-running; slow-restore-not-killed test in T3.3."
+coordination_notes:
+  - "server.go is the shared integration point across Phase 1, 2, 3, 5, 6, 7; T1.10 owns mounting the /api/v1 router into the running server. Same-wave tasks editing server.go are flagged conflicts_with and must coordinate on route registration order."
+  - "Handlers call store directly (C1); no internal/core/* layer. Thin orchestration ONLY where cross-store: backup config -> scheduler (T3.3), proofs verify wiring (T2.4), capabilities derivation (T3.5). Store is net/http-free; transport (api/) is the only HTTP-aware layer. Enforce via import lint in reviewer gates."
+  - "Migrations (P-4) are versioned and sequential; never edit a shipped migration, add a new one. Store creates schema directly today (store/store.go) until the runner lands. pending_deletions table added in T0.2."
+  - "DTOs live in api/dto and are shared by self + admin endpoints; golden-file tests lock wire format before endpoints build on them. Admin lists use offset/limit; audit log keeps cursor pagination."
+  - "OpenAPI spec (openapi/sovereign.v1.yaml) is source of truth; every endpoint task must keep route-set in parity with it (drift test T1.5)."
+  - "Handler tasks depend on P-5 store methods and P-4 migrations; do not start Phase 2/3 handler work before Phase 0 exit gate T0.6 passes."
+  - "web/shared/api.js is the single shared client module; panel (Phase 5) and admin (Phase 6) both consume it, so its API surface is a contract."
+  - "Audit-log actor field (A8) folds into GET /admin/audit work (T3.6); real actor comes from P-2 session model."
+  - "auth.session.dual_read + api.cors_origins config options are added in T0.7 (config.go + config.example.yml) before T0.3/T1.4 consume them."
+contracts:
+  - from_task: T0.1
+    to_task: T1.4
+    interface: "Exact-match scope check + scopeImplies implication table; signature ScopesContains(granted, want []string) bool"
+    format: "Go func in internal/wiring; table-driven tests per call site"
+  - from_task: T0.7
+    to_task: T0.3
+    interface: "auth.session.dual_read config (default TRUE); gates whether old JWT cookies are accepted alongside new session rows"
+    format: "Config field in internal/server/config.go + config.example.yml"
+  - from_task: T0.7
+    to_task: T1.4
+    interface: "api.cors_origins config (allowlist); CORS deny-by-default, never * alongside credentials"
+    format: "Config field in internal/server/config.go + config.example.yml"
+  - from_task: T0.3
+    to_task: T1.4
+    interface: "Session store API: CreateSession, GetSessionByTokenHash, RevokeSession, sliding renewal, absolute cap; dual-read accepts old JWT + new rows, same cookie name, format-sniffed; both formats -> 400"
+    format: "Go methods on store; session row schema from P-4"
+  - from_task: T0.2
+    to_task: T0.3
+    interface: "sessions table schema (id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at, user_agent_hash, ip_hash)"
+    format: "Versioned migration; sequential, never edited after ship"
+  - from_task: T0.2
+    to_task: T0.5
+    interface: "updated_at/version columns on users/public_keys/proof_claims/profile_links (ETag support on GET)"
+    format: "Versioned migration"
+  - from_task: T0.2
+    to_task: T3.6
+    interface: "pending_deletions table (id, user_id, requested_at, status, approved_by, approved_at)"
+    format: "Versioned migration"
+  - from_task: T0.5
+    to_task: T2.1
+    interface: "Store methods: SetUserDisplayName, UpdateProfileLink, DeleteWebAuthnCredential (refuse last), GetTenantByID, GetTenantByDID, ListUsersPage, ListAuditPage, ListClientsPage, ListTenantsPage, CountUsers, DeleteUser"
+    format: "Go methods on store; tenant-scoped"
+  - from_task: T1.1
+    to_task: T1.3
+    interface: "RFC 9457 Problem Details type + mapper; stable problem URIs under https://<domain>/problems/"
+    format: "Go package internal/api/problem"
+  - from_task: T1.2
+    to_task: T2.6
+    interface: "Typed DTOs (snake_case JSON, RFC 3339 Z timestamps); admin lists {data,offset,limit,total}, audit log {data,next_cursor}; no map[string]any"
+    format: "Go package internal/api/dto; golden-file tests"
+  - from_task: T1.5
+    to_task: T1.6
+    interface: "OpenAPI 3.1 spec (openapi/sovereign.v1.yaml) + bidirectional drift test (kin-openapi, test-only)"
+    format: "YAML spec; Go test asserting route-set <-> spec parity"
+  - from_task: T1.4
+    to_task: T2.6
+    interface: "Middleware chain: request-id -> panic-recover -> body-limit -> per-route timeout (route-table column) -> CORS -> rate-limit (per-IP) -> authn (bearer XOR cookie) -> CSRF (cookie principals, unsafe methods; hidden csrf_token field for form-encoded no-JS POSTs) -> scope authz -> conditional-request (ETag on GET only) -> idempotency (invite + backup run/restore) -> handler -> problem mapper -> access log"
+    format: "Go middleware funcs; route table declares scope + timeout per route"
+  - from_task: T2.1
+    to_task: T2.6
+    interface: "identity handlers call store directly (no net/http in store); table-driven vs temp SQLite"
+    format: "Go handlers in internal/api/v1/me/"
+  - from_task: T3.3
+    to_task: T3.6
+    interface: "backup handlers: config persists + drives backup.Scheduler; runs/restores long-running with Idempotency-Key"
+    format: "Go handlers in internal/api/v1/admin/"
+  - from_task: T5.1
+    to_task: T5.2
+    interface: "web/shared/api.js: reads __Host-csrf, sends X-CSRF-Token on unsafe methods, normalizes problem+json to ApiError, tracks ETag, handles 401/403/429, generates Idempotency-Key for invite + backup run/restore"
+    format: "ES module, go:embed, strict CSP, no inline script"
+  - from_task: T5.1
+    to_task: T6.1
+    interface: "web/shared/api.js + vendored simple.css + embed.go shared by panel and admin clients"
+    format: "ES module + CSS + Go embed"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TASKS
+# ═══════════════════════════════════════════════════════════════════════════
+tasks:
+  # ─────────────────────────────────────────────────────────────────────────
+  # PHASE 0 — PREREQUISITES (P-1..P-5)
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T0.1
+    title: "P-1: Fix scope matching (ScopesContains exact match + scopeImplies)"
+    description: "Replace strings.HasPrefix(granted, want) in wiring.go with exact match + explicit scopeImplies implication table. Land ALONE (wave 1) with a regression test per existing call site (profile:read-only must NOT satisfy profile:read)."
+    wave: 1
+    agent: gem-implementer
+    status: completed
+    phase: 0
+    covers: [P-1, scope-matching, authz]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/wiring/wiring.go
+        description: "ScopesContains implementation to fix"
+    acceptance_criteria:
+      - "ScopesContains uses exact match by default; scopeImplies table is explicit and small."
+      - "profile:read-only does NOT satisfy profile:read (regression test)."
+      - "Every existing call site of ScopesContains has a regression test."
+    success_criteria:
+      - "go test ./... -race passes with new regression tests."
+      - "task lint, vet, vulncheck pass."
+    tech_stack: [Go 1.27]
+    test_coverage: ">=90% on wiring scope logic"
+    handoff:
+      do_not_reinvestigate: ["Scope semantics are defined in context envelope authn_authz_model; do not re-derive."]
+      required_test_first: "Write failing regression test for profile:read-only before changing ScopesContains."
+      target_files: [internal/wiring/wiring.go]
+      minimal_change: "Only the scope-matching function + its tests; no other refactor."
+      acceptance_checks: ["Regression test per call site", "exact-match default"]
+
+  - id: T0.2
+    title: "P-4: Migrations framework + schema"
+    description: "Introduce versioned sequential migration runner (store currently creates schema directly in store/store.go). Add tables: sessions, idempotency_keys, backup_config, backup_runs, backup_restores, takedowns, tos_documents, pending_deletions (id, user_id, requested_at, status, approved_by, approved_at); add updated_at/version columns on users/public_keys/proof_claims/profile_links."
+    wave: 2
+    agent: gem-implementer
+    status: completed
+    phase: 0
+    covers: [P-4, migrations, schema, M2]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/store/store.go
+        description: "Current direct schema creation; migration runner replaces/augments"
+    acceptance_criteria:
+      - "Migration runner is versioned and sequential; never edits a shipped migration."
+      - "All listed tables and columns exist after up; down reverses cleanly. pending_deletions included."
+      - "Migration up/down tests pass."
+    success_criteria:
+      - "go test ./... -race passes; migration up/down round-trip test green."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90% on migration runner"
+    handoff:
+      do_not_reinvestigate: ["Schema shape is fixed in context envelope P-4; do not redesign."]
+      required_test_first: "Write migration up/down test before implementing runner."
+      target_files: [internal/store/, migrations/]
+      minimal_change: "Add runner + migrations; do not refactor existing store queries."
+      acceptance_checks: ["up/down round-trip", "sequential versioning", "pending_deletions"]
+
+  - id: T0.4
+    title: "P-3: CSRF infrastructure"
+    description: "Double-submit token (__Host-csrf cookie + X-CSRF-Token header) + Origin/Sec-Fetch-Site enforcement for cookie principals on unsafe methods. ALSO accept the token from a hidden form field (<input name=\"csrf_token\">) for application/x-www-form-urlencoded POSTs (synchronizer-token pattern, rendered server-side) so the no-JS form fallback (D-7) is not broken. Bearer path exempt by design (D-6)."
+    wave: 2
+    agent: gem-implementer
+    status: completed
+    phase: 0
+    covers: [P-3, CSRF, security, B1]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/api/middleware/
+        description: "CSRF middleware lands here (package created in Phase 1; infra built now)"
+    acceptance_criteria:
+      - "Double-submit token issued and validated for cookie principals on unsafe methods."
+      - "Origin/Sec-Fetch-Site enforced; cross-origin unsafe -> 403."
+      - "Bearer principals exempt from CSRF."
+      - "Form-encoded no-JS POSTs accepted via hidden csrf_token field (synchronizer-token); header OR field accepted, never both absent."
+    success_criteria:
+      - "CSRF x method x principal x content-type matrix test green (incl. form-encoded no-JS POST); bearer+cookie together -> 400."
+    tech_stack: [Go 1.27]
+    test_coverage: ">=90% on CSRF logic"
+    handoff:
+      do_not_reinvestigate: ["CSRF model is fixed in D-6 + B1; do not redesign."]
+      required_test_first: "Write CSRF matrix test (method x principal x content-type) first."
+      target_files: [internal/api/middleware/csrf.go]
+      minimal_change: "CSRF infra only; wiring into chain happens in T1.4."
+      acceptance_checks: ["cross-origin unsafe -> 403", "bearer exempt", "form-encoded csrf_token field"]
+
+  - id: T0.7
+    title: "Config options: auth.session.dual_read + api.cors_origins"
+    description: "Add auth.session.dual_read (default TRUE = accept old JWT cookies AND new session rows, fail-safe against lockout) and api.cors_origins (CORS allowlist, deny-by-default) to internal/server/config.go AND config.example.yml (source of truth per AGENTS.md)."
+    wave: 2
+    agent: gem-implementer
+    status: completed
+    phase: 0
+    covers: [config, R3, R2]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/server/config.go
+        description: "Config struct; add dual_read + cors_origins"
+      - path: config.example.yml
+        description: "Source of truth for config shape; keep in sync"
+    acceptance_criteria:
+      - "auth.session.dual_read and api.cors_origins present in config.go AND config.example.yml."
+      - "dual_read defaults to TRUE; cors_origins defaults to empty (deny-by-default)."
+      - "config.example.yml and config.go stay in sync (AGENTS.md)."
+    success_criteria:
+      - "go test ./... -race passes; config parse test green."
+    tech_stack: [Go 1.27]
+    test_coverage: "Config parse tests"
+    handoff:
+      do_not_reinvestigate: ["Config shape fixed in AGENTS.md + config.example.yml; do not redesign."]
+      required_test_first: "Write config parse test first."
+      target_files: [internal/server/config.go, config.example.yml]
+      minimal_change: "Add the two options only; no other config changes."
+      acceptance_checks: ["dual_read default TRUE", "cors_origins deny-by-default", "example.yml in sync"]
+
+  - id: T0.3
+    title: "P-2: Real session model (sessions table + config-gated dual-read)"
+    description: "Implement sessions table (id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at, user_agent_hash, ip_hash) with sliding renewal, server-side revocation, absolute cap. Ship dual-read gated by auth.session.dual_read (default TRUE): accept old JWT cookies AND new session rows for one release. SAME cookie name for both; middleware distinguishes JWT vs session-token by FORMAT (JWT parse vs session-token lookup); if both formats somehow present -> 400."
+    wave: 3
+    agent: gem-implementer
+    status: completed
+    phase: 0
+    covers: [P-2, sessions, authn, M6, R2]
+    dependencies: [T0.2, T0.7]
+    conflicts_with: []
+    context_files:
+      - path: internal/authstore/
+        description: "OIDC/auth persistence; session model extends here"
+    acceptance_criteria:
+      - "Session create/get/revoke with sliding renewal and absolute cap."
+      - "Dual-read accepts old JWT cookies AND new session rows, gated by auth.session.dual_read (default TRUE)."
+      - "Same cookie name; format-sniffed (JWT parse vs session-token lookup); both formats present -> 400."
+      - "Concurrent session-revoke race test passes under -race."
+    success_criteria:
+      - "go test ./... -race passes; concurrent revoke race test + dual-read overlap test green."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90% on session store"
+    handoff:
+      do_not_reinvestigate: ["Session schema fixed in P-2; dual-read window is one release, gated by config."]
+      required_test_first: "Write concurrent session-revoke race test + dual-read overlap test first."
+      target_files: [internal/authstore/, internal/store/]
+      minimal_change: "Session model + config-gated dual-read; do not touch unrelated auth flows."
+      acceptance_checks: ["dual-read config-gated", "same cookie name format-sniffed", "both formats -> 400", "server-side revocation", "absolute cap"]
+
+  - id: T0.5
+    title: "P-5: Store methods"
+    description: "Add store methods: SetUserDisplayName, UpdateProfileLink, DeleteWebAuthnCredential (refuse last), GetTenantByID, GetTenantByDID, ListUsersPage, ListAuditPage, ListClientsPage, ListTenantsPage, CountUsers, DeleteUser. All tenant-scoped. Admin lists use offset/limit; audit log uses cursor."
+    wave: 3
+    agent: gem-implementer
+    status: completed
+    phase: 0
+    covers: [P-5, store, persistence, C4]
+    dependencies: [T0.2]
+    conflicts_with: []
+    context_files:
+      - path: internal/store/
+        description: "Store methods land here"
+    acceptance_criteria:
+      - "All 11 store methods exist and are tenant-scoped."
+      - "DeleteWebAuthnCredential refuses to delete the last credential (409)."
+      - "List* methods support pagination (offset/limit for admin lists; cursor for audit)."
+    success_criteria:
+      - "go test ./... -race passes; table-driven tests vs temp SQLite."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90% on store methods"
+    handoff:
+      do_not_reinvestigate: ["Method signatures fixed in P-5; do not redesign."]
+      required_test_first: "Write failing store tests first."
+      target_files: [internal/store/]
+      minimal_change: "Add the 11 methods only."
+      acceptance_checks: ["tenant-scoped", "refuse last credential", "offset/limit + cursor pagination"]
+
+  - id: T0.6
+    title: "Phase 0 exit verification"
+    description: "Verify all prerequisites landed: migration up/down tests (incl pending_deletions), scope table test incl profile:read-only regression, concurrent session-revoke race test, dual-read overlap test, CSRF form-encoded matrix. Gate before any endpoint work."
+    wave: 4
+    agent: gem-reviewer
+    status: completed
+    phase: 0
+    verdict: "APPROVED. All 7 exit criteria met (1 with forward-only migration caveat), all 5 gates green (race suite 30 pkgs, lint 0, vet, vulncheck 0, coverage 87.0%). Non-blocking convention gap: migration runner is forward-only (up-only, no down) — recorded as known convention."
+    covers: [verification, gate]
+    dependencies: [T0.1, T0.2, T0.3, T0.4, T0.5, T0.7]
+    conflicts_with: []
+    acceptance_criteria:
+      - "Migration up/down tests green (incl pending_deletions)."
+      - "Scope table test incl profile:read-only regression green."
+      - "Concurrent session-revoke race test + dual-read overlap test green under -race."
+      - "CSRF form-encoded no-JS matrix case green."
+    success_criteria:
+      - "task lint, test -race, vet, vulncheck all pass; coverage >=80%."
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PHASE 1 — FOUNDATION
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T1.1
+    title: "api/problem: RFC 9457 Problem Details"
+    description: "Implement internal/api/problem package: RFC 9457 application/problem+json type + mapper. Stable problem URIs under https://<domain>/problems/: invalid-request, validation-failed, unauthenticated, insufficient-scope, forbidden, not-found, conflict, precondition-required, precondition-failed, payload-too-large, rate-limited, not-implemented, internal."
+    wave: 5
+    agent: gem-implementer
+    status: pending
+    phase: 1
+    covers: [D-3, problem-details, errors]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/api/problem/
+        description: "New package"
+    acceptance_criteria:
+      - "Problem type serializes to application/problem+json with stable type URIs."
+      - "Never 500 for client error; status discipline enforced."
+    success_criteria:
+      - "Golden-file JSON tests green."
+    tech_stack: [Go 1.27]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Problem URIs fixed in api_conventions; do not invent new ones."]
+      required_test_first: "Write golden-file problem tests first."
+      target_files: [internal/api/problem/]
+      minimal_change: "Problem package only."
+      acceptance_checks: ["stable type URIs", "no 500 for client error"]
+
+  - id: T1.2
+    title: "api/dto: typed DTOs"
+    description: "Implement internal/api/dto package: typed DTOs (snake_case JSON, RFC 3339 Z timestamps). Admin lists use {data,offset,limit,total}; audit log uses {data,next_cursor} (opaque cursor = base64(sort_key,id)). No map[string]any in any response."
+    wave: 5
+    agent: gem-implementer
+    status: pending
+    phase: 1
+    covers: [G, dto, typing, C4]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/api/dto/
+        description: "New package"
+    acceptance_criteria:
+      - "All DTOs typed; no map[string]any in responses."
+      - "snake_case JSON, RFC 3339 Z timestamps."
+      - "Admin lists {data,offset,limit,total}; audit log {data,next_cursor}."
+    success_criteria:
+      - "Golden-file JSON tests lock wire format."
+    tech_stack: [Go 1.27]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["JSON casing + collection shape fixed in api_conventions."]
+      required_test_first: "Write golden-file DTO tests first."
+      target_files: [internal/api/dto/]
+      minimal_change: "DTO package only."
+      acceptance_checks: ["no map[string]any", "snake_case", "offset/limit + cursor"]
+
+  - id: T1.5
+    title: "OpenAPI skeleton + bidirectional drift test"
+    description: "Hand-write openapi/sovereign.v1.yaml (source of truth, D-5). Add kin-openapi test-only dep. Bidirectional drift test: route-set <-> spec parity both directions; must fail on a deliberately-omitted route."
+    wave: 5
+    agent: gem-implementer
+    status: pending
+    phase: 1
+    covers: [D-5, openapi, contract]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: openapi/sovereign.v1.yaml
+        description: "Hand-written spec"
+    acceptance_criteria:
+      - "OpenAPI 3.1 spec exists and is source of truth."
+      - "Drift test asserts route-set <-> spec parity both directions."
+      - "Drift test fails on a deliberately-omitted route."
+    success_criteria:
+      - "go test ./... -race passes; drift test green both directions."
+    tech_stack: [Go 1.27, kin-openapi]
+    test_coverage: "Drift test is the structural gate"
+    handoff:
+      do_not_reinvestigate: ["Spec is hand-written per D-5; do not generate from code."]
+      required_test_first: "Write drift test that fails on omitted route first."
+      target_files: [openapi/sovereign.v1.yaml, internal/api/]
+      minimal_change: "Spec skeleton + drift test only."
+      acceptance_checks: ["fails on omitted route", "bidirectional parity"]
+
+  - id: T1.3
+    title: "Route table + router (stdlib ServeMux)"
+    description: "Implement internal/api/router.go route table using stdlib net/http.ServeMux Go 1.22+ patterns (D-2). Every route declares its required scope AND its per-route timeout in the route table. No router dependency."
+    wave: 6
+    agent: gem-implementer
+    status: pending
+    phase: 1
+    covers: [D-2, routing, route-table, M4]
+    dependencies: [T1.1, T1.2]
+    conflicts_with: [T1.4]
+    context_files:
+      - path: internal/api/router.go
+        description: "Route table + router"
+    acceptance_criteria:
+      - "ServeMux Go 1.22+ patterns; no router dep."
+      - "Every route declares required scope AND per-route timeout in the route table."
+      - "no-route-without-scope test passes."
+    success_criteria:
+      - "go test ./... -race passes; no-route-without-scope test green."
+    tech_stack: [Go 1.27]
+    test_coverage: "Route table coverage"
+    handoff:
+      do_not_reinvestigate: ["Routing decision fixed in D-2; scope-per-route + timeout-per-route rule fixed in authn_authz_model."]
+      required_test_first: "Write no-route-without-scope test first."
+      target_files: [internal/api/router.go]
+      minimal_change: "Route table + router only."
+      acceptance_checks: ["no-route-without-scope", "stdlib ServeMux", "per-route timeout column"]
+
+  - id: T1.4
+    title: "Middleware chain"
+    description: "Implement full middleware chain: request-id -> panic-recover -> body-limit -> per-route timeout (route-table column; backup run/restore declared long-running) -> CORS (api.cors_origins allowlist) -> rate-limit (per-IP only) -> authn (bearer XOR cookie, audience-checked; dual-read format-sniffed, both formats -> 400) -> CSRF (cookie principals, unsafe methods; hidden csrf_token field for form-encoded no-JS POSTs) -> scope authz (table-driven, coarse scopes) -> conditional-request (ETag on GET only; no mandatory If-Match) -> idempotency (invite + backup run/restore) -> handler -> problem+json mapper -> access log. Bearer+cookie together -> 400."
+    wave: 6
+    agent: gem-implementer
+    status: pending
+    phase: 1
+    covers: [D-6, middleware, authn, authz, security, M4, M6, C2, C3, C5, C6, R2]
+    dependencies: [T0.3, T0.4, T0.7]
+    conflicts_with: [T1.3]
+    context_files:
+      - path: internal/api/middleware/
+        description: "Middleware chain"
+    acceptance_criteria:
+      - "Full chain in documented order."
+      - "Bearer XOR cookie mutually exclusive per request; both -> 400."
+      - "Audience-checked (D-8: sovereign-api, sovereign-rs, sovereign-solid, sovereign-atproto)."
+      - "Scope authz table-driven over coarse scopes; conditional-request is ETag-on-GET only (no If-Match 428/412)."
+      - "Rate-limit is per-IP only; idempotency on invite + backup run/restore only."
+      - "Per-route timeout from route-table column; long-running routes not killed by default timeout."
+    success_criteria:
+      - "Middleware order test green; bearer+cookie -> 400; oversized -> 413; cross-origin unsafe -> 403; slow-restore-not-killed test green."
+    tech_stack: [Go 1.27]
+    test_coverage: ">=90% on middleware"
+    handoff:
+      do_not_reinvestigate: ["Chain order fixed in authn_authz_model.middleware_chain; do not reorder."]
+      required_test_first: "Write middleware order test + bearer+cookie 400 test first."
+      target_files: [internal/api/middleware/]
+      minimal_change: "Middleware chain only; route registration is T1.3."
+      acceptance_checks: ["chain order", "bearer XOR cookie", "audience check", "per-IP rate limit", "ETag-only conditional", "per-route timeout"]
+
+  - id: T1.6
+    title: "/meta/*, /health, /ready endpoints"
+    description: "Implement GET /api/v1/meta/capabilities, /meta/version, /health, /ready, /openapi.json (from embedded spec)."
+    wave: 7
+    agent: gem-implementer
+    status: pending
+    phase: 1
+    covers: [meta, health, ready]
+    dependencies: [T1.3, T1.4]
+    conflicts_with: [T1.7, T1.10]
+    context_files:
+      - path: internal/api/v1/meta/
+        description: "Meta endpoints"
+      - path: cmd/sovereign/server.go
+        description: "Server assembly; register meta routes into mounted router"
+    acceptance_criteria:
+      - "All meta/health/ready endpoints registered and scoped (anonymous)."
+      - "/openapi.json serves embedded spec."
+    success_criteria:
+      - "go test ./... -race passes; httptest matrix green."
+    tech_stack: [Go 1.27]
+    test_coverage: "Thin handlers; logic in store"
+    handoff:
+      do_not_reinvestigate: ["Endpoint shapes fixed in endpoint_catalog.meta_health."]
+      required_test_first: "Write httptest for each meta endpoint first."
+      target_files: [internal/api/v1/meta/]
+      minimal_change: "Meta endpoints only."
+      acceptance_checks: ["all meta routes", "openapi.json served"]
+
+  - id: T1.7
+    title: "Auth & session endpoints"
+    description: "Implement POST /auth/invite/redeem (invite token, exchange-only for programmatic), GET /auth/session, POST /auth/session/refresh (sliding renewal), DELETE /auth/session (revoke current), POST /auth/webauthn/register/begin|finish (session-derived user, NOT ?handle=), POST /auth/webauthn/login/begin|finish (anon, uniform response for unknown handles). GET /invite/{token} is an ANONYMOUS route (exempt from authn middleware): it redeems the token, mints a SESSION cookie, and 303s to /panel. 'Exchange-only' applies to the programmatic redeem, not the browser GET. Token-in-URL leaks via Referer/access logs (acknowledged under PII discipline)."
+    wave: 7
+    agent: gem-implementer
+    status: pending
+    phase: 1
+    covers: [auth, session, webauthn, invite, M1]
+    dependencies: [T1.3, T1.4]
+    conflicts_with: [T1.6, T1.10]
+    context_files:
+      - path: internal/api/v1/auth/
+        description: "Auth endpoints"
+      - path: cmd/sovereign/server.go
+        description: "Server assembly; register auth routes into mounted router"
+    acceptance_criteria:
+      - "Invite redeem is exchange-only for programmatic (may call POST /auth/invite/redeem and nothing else)."
+      - "GET /invite/{token} is ANONYMOUS (exempt from authn middleware), redeems token, mints SESSION cookie, 303s to /panel."
+      - "WebAuthn register derives user from session, not ?handle=."
+      - "WebAuthn login returns uniform response for unknown handles (no enumeration)."
+      - "Session refresh does sliding renewal; DELETE revokes current."
+    success_criteria:
+      - "go test ./... -race passes; negative tests for wrong-audience/wrong-issuer tokens; browser GET /invite/{token} -> session cookie set -> /panel loads authenticated."
+    tech_stack: [Go 1.27, zitadel/oidc, go-webauthn]
+    test_coverage: ">=90% on auth logic"
+    handoff:
+      do_not_reinvestigate: ["Auth endpoint shapes fixed in endpoint_catalog.auth_session; GET /invite/{token} is anonymous per M1."]
+      required_test_first: "Write failing auth endpoint tests + browser-GET-invite-session test first."
+      target_files: [internal/api/v1/auth/]
+      minimal_change: "Auth endpoints only."
+      acceptance_checks: ["exchange-only programmatic redeem", "anonymous browser GET mints session", "session-derived webauthn", "uniform login response"]
+
+  - id: T1.9
+    title: "Critic review: authn/authz model + middleware chain"
+    description: "Independent critic review of the authn/authz model (bearer XOR cookie, coarse scope taxonomy exact-match, audience separation D-8, middleware chain order, config-gated dual-read) before endpoints build on it. Challenge edge cases, over-engineering, logic gaps."
+    wave: 7
+    agent: gem-critic
+    status: pending
+    phase: 1
+    covers: [security-review, authn, authz]
+    dependencies: [T1.4]
+    conflicts_with: []
+    acceptance_criteria:
+      - "Critic report on authn/authz model + middleware chain with findings."
+      - "Findings triaged; blockers resolved before Phase 2 endpoints."
+    success_criteria:
+      - "Critic report delivered; no unresolved decision_blocker findings."
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: T1.10
+    title: "Server assembly: mount /api/v1 router into server.go"
+    description: "Mount the /api/v1 router (T1.3) into the running server (cmd/sovereign/server.go). Wire the middleware chain (T1.4) and register the router on the identity host. This task OWNS server.go assembly; other endpoint tasks register routes into the router, not directly into server.go."
+    wave: 7
+    agent: gem-implementer
+    status: pending
+    phase: 1
+    covers: [server-assembly, wiring, R5]
+    dependencies: [T1.3, T1.4]
+    conflicts_with: [T1.6, T1.7]
+    context_files:
+      - path: cmd/sovereign/server.go
+        description: "Server assembly; mount /api/v1 router here"
+    acceptance_criteria:
+      - "/api/v1 router mounted into the running server on the identity host."
+      - "Middleware chain wired; server starts and serves /api/v1."
+      - "Route registration order coordinated with T1.6/T1.7 (same wave)."
+    success_criteria:
+      - "go test ./... -race passes; server boot + /api/v1 smoke test green."
+    tech_stack: [Go 1.27]
+    test_coverage: "Server boot + route smoke test"
+    handoff:
+      do_not_reinvestigate: ["Server assembly is owned here; endpoint tasks register into the router, not server.go."]
+      required_test_first: "Write server boot + /api/v1 smoke test first."
+      target_files: [cmd/sovereign/server.go]
+      minimal_change: "Mount router + wire chain only; no endpoint logic."
+      acceptance_checks: ["router mounted", "server boots", "smoke test green"]
+
+  - id: T1.8
+    title: "Phase 1 exit verification"
+    description: "Verify foundation: drift test fails on deliberately-omitted route, middleware order test, no-route-without-scope test, server assembly smoke test. Gate before Phase 2/3 endpoint work."
+    wave: 8
+    agent: gem-reviewer
+    status: pending
+    phase: 1
+    covers: [verification, gate]
+    dependencies: [T1.3, T1.4, T1.5, T1.6, T1.7, T1.9, T1.10]
+    conflicts_with: []
+    acceptance_criteria:
+      - "Drift test fails on deliberately-omitted route."
+      - "Middleware order test green."
+      - "no-route-without-scope test green."
+      - "Server assembly smoke test green."
+    success_criteria:
+      - "task lint, test -race, vet, vulncheck pass; coverage >=80%."
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PHASE 2 — SELF API (parallel with Phase 3)
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T2.1
+    title: "identity handlers (direct on store)"
+    description: "Implement internal/api/v1/me/identity handlers calling store directly (no internal/core layer, C1). Covers self read/write, onboarding, ToS, export, deletion request. Table-driven tests vs temp SQLite."
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    phase: 2
+    covers: [D-4, handlers, identity, C1]
+    dependencies: [T0.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/me/
+        description: "Self handlers; identity domain"
+    acceptance_criteria:
+      - "Handlers call store directly; no net/http in store."
+      - "Table-driven tests vs temp SQLite; coverage >=90% on store-backed logic."
+    success_criteria:
+      - "go test ./... -race passes; coverage >=90% on identity handlers."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Handlers call store directly (C1); no core/* layer."]
+      required_test_first: "Write failing handler tests first."
+      target_files: [internal/api/v1/me/]
+      minimal_change: "Identity handlers only."
+      acceptance_checks: ["direct on store", ">=90% coverage"]
+
+  - id: T2.2
+    title: "profile handlers (direct on store)"
+    description: "Implement internal/api/v1/me/profile handlers calling store directly (no internal/core layer, C1). Profile read/write/publish, links CRUD + reorder, avatar. Table-driven vs temp SQLite."
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    phase: 2
+    covers: [D-4, handlers, profile, C1]
+    dependencies: [T0.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/me/
+        description: "Self handlers; profile domain"
+    acceptance_criteria:
+      - "Handlers call store directly; coverage >=90%."
+      - "Profile publish/unpublish, links reorder, avatar handled."
+    success_criteria:
+      - "go test ./... -race passes; coverage >=90%."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Handlers call store directly (C1); no core/* layer."]
+      required_test_first: "Write failing handler tests first."
+      target_files: [internal/api/v1/me/]
+      minimal_change: "Profile handlers only."
+      acceptance_checks: ["direct on store", ">=90% coverage"]
+
+  - id: T2.3
+    title: "keys handlers (direct on store)"
+    description: "Implement internal/api/v1/me/keys handlers calling store directly (no internal/core layer, C1), wiring internal/keys (SSH/PGP parsing). Key CRUD + revoke. Table-driven vs temp SQLite."
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    phase: 2
+    covers: [D-4, handlers, keys, C1]
+    dependencies: [T0.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/me/
+        description: "Self handlers; keys domain"
+      - path: internal/keys/
+        description: "Existing SSH/PGP parsing to wire"
+    acceptance_criteria:
+      - "Handlers call store directly; coverage >=90%."
+      - "Wires internal/keys; fail-closed on private-key material."
+    success_criteria:
+      - "go test ./... -race passes; coverage >=90%."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Reuse internal/keys; do not reimplement parsing."]
+      required_test_first: "Write failing handler tests first."
+      target_files: [internal/api/v1/me/]
+      minimal_change: "Keys handlers only."
+      acceptance_checks: ["direct on store", "wires internal/keys", ">=90% coverage"]
+
+  - id: T2.4
+    title: "proofs handlers (direct on store; verify orchestration)"
+    description: "Implement internal/api/v1/me/proofs handlers calling store directly (no internal/core layer, C1), wiring internal/proofs (Keyoxide-style verification). Proof CRUD + verify. Keep thin orchestration for proofs verify wiring (cross-store). SSRF-safe verify (DNS resolve, reject loopback/private/link-local/multicast/cloud-metadata, cap redirects/body, strict timeout, background/scheduler not request path)."
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    phase: 2
+    covers: [D-4, handlers, proofs, ssrf, C1]
+    dependencies: [T0.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/me/
+        description: "Self handlers; proofs domain"
+      - path: internal/proofs/verify.go
+        description: "Existing SSRF-safe verification pattern to reuse"
+    acceptance_criteria:
+      - "Handlers call store directly; coverage >=90%."
+      - "Wires internal/proofs; SSRF-safe verify per AGENTS.md pattern."
+      - "Thin orchestration for proofs verify wiring only."
+    success_criteria:
+      - "go test ./... -race passes; SSRF negative tests green."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Reuse internal/proofs/verify.go SSRF pattern; do not weaken it."]
+      required_test_first: "Write failing handler tests + SSRF negative tests first."
+      target_files: [internal/api/v1/me/]
+      minimal_change: "Proofs handlers only."
+      acceptance_checks: ["direct on store", "SSRF-safe verify", ">=90% coverage"]
+
+  - id: T2.5
+    title: "sessions handlers (direct on store)"
+    description: "Implement internal/api/v1/me/sessions handlers calling store directly (no internal/core layer, C1). Session list/revoke (self), sliding renewal. Table-driven vs temp SQLite."
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    phase: 2
+    covers: [D-4, handlers, sessions, C1]
+    dependencies: [T0.3, T0.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/me/
+        description: "Self handlers; sessions domain"
+    acceptance_criteria:
+      - "Handlers call store directly; coverage >=90%."
+      - "Session list/revoke + sliding renewal."
+    success_criteria:
+      - "go test ./... -race passes; coverage >=90%."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Session model from P-2; do not redesign."]
+      required_test_first: "Write failing handler tests first."
+      target_files: [internal/api/v1/me/]
+      minimal_change: "Sessions handlers only."
+      acceptance_checks: ["direct on store", ">=90% coverage"]
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PHASE 3 — ADMIN API (parallel with Phase 2)
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T3.1
+    title: "tenants handlers (direct on store)"
+    description: "Implement internal/api/v1/admin/tenants handlers calling store directly (no internal/core layer, C1). Tenant CRUD, GetTenantByID/DID. Table-driven vs temp SQLite."
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    phase: 3
+    covers: [D-4, handlers, tenants, C1]
+    dependencies: [T0.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/admin/
+        description: "Admin handlers; tenants domain"
+    acceptance_criteria:
+      - "Handlers call store directly; coverage >=90%."
+      - "Tenant CRUD + GetTenantByID/DID."
+    success_criteria:
+      - "go test ./... -race passes; coverage >=90%."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Handlers call store directly (C1); no core/* layer."]
+      required_test_first: "Write failing handler tests first."
+      target_files: [internal/api/v1/admin/]
+      minimal_change: "Tenants handlers only."
+      acceptance_checks: ["direct on store", ">=90% coverage"]
+
+  - id: T3.2
+    title: "clients handlers (direct on store)"
+    description: "Implement internal/api/v1/admin/clients handlers calling store directly (no internal/core layer, C1). Client CRUD + secret rotation (show-once, USER-APPROVED decision 5). Table-driven vs temp SQLite."
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    phase: 3
+    covers: [D-4, handlers, clients, C1]
+    dependencies: [T0.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/admin/
+        description: "Admin handlers; clients domain"
+    acceptance_criteria:
+      - "Handlers call store directly; coverage >=90%."
+      - "Client secret rotation is show-once."
+    success_criteria:
+      - "go test ./... -race passes; coverage >=90%."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Secret rotation show-once is fixed (decision 5)."]
+      required_test_first: "Write failing handler tests first."
+      target_files: [internal/api/v1/admin/]
+      minimal_change: "Clients handlers only."
+      acceptance_checks: ["direct on store", "show-once rotation", ">=90% coverage"]
+
+  - id: T3.3
+    title: "backup handlers (direct on store; scheduler orchestration)"
+    description: "Implement internal/api/v1/admin/backup handlers calling store directly (no internal/core layer, C1). Backup config persists + drives backup.Scheduler (thin cross-store orchestration); runs/restores are LONG-RUNNING (declared in route-table timeout column, not killed by default timeout) with Idempotency-Key. Table-driven vs temp SQLite."
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    phase: 3
+    covers: [D-4, handlers, backup, A3, M4, C1]
+    dependencies: [T0.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/admin/
+        description: "Admin handlers; backup domain"
+      - path: internal/backup/
+        description: "Existing backup scheduler to drive"
+    acceptance_criteria:
+      - "Handlers call store directly; coverage >=90%."
+      - "Backup config genuinely persists and drives Scheduler."
+      - "Restores require confirm:true + Idempotency-Key."
+      - "Backup run/restore declared long-running; slow restore not killed by default timeout."
+    success_criteria:
+      - "go test ./... -race passes; backup config->scheduler-start integration test + slow-restore-not-killed test green."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Reuse internal/backup Scheduler; do not reimplement."]
+      required_test_first: "Write failing handler tests + config->scheduler integration + slow-restore test first."
+      target_files: [internal/api/v1/admin/]
+      minimal_change: "Backup handlers only."
+      acceptance_checks: ["direct on store", "config persists", "drives Scheduler", "long-running restore"]
+
+  - id: T3.4
+    title: "moderation handlers (direct on store)"
+    description: "Implement internal/api/v1/admin/moderation handlers calling store directly (no internal/core layer, C1). Takedowns CRUD. Table-driven vs temp SQLite."
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    phase: 3
+    covers: [D-4, handlers, moderation, C1]
+    dependencies: [T0.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/admin/
+        description: "Admin handlers; moderation domain"
+    acceptance_criteria:
+      - "Handlers call store directly; coverage >=90%."
+      - "Takedowns CRUD."
+    success_criteria:
+      - "go test ./... -race passes; coverage >=90%."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Handlers call store directly (C1); no core/* layer."]
+      required_test_first: "Write failing handler tests first."
+      target_files: [internal/api/v1/admin/]
+      minimal_change: "Moderation handlers only."
+      acceptance_checks: ["direct on store", ">=90% coverage"]
+
+  - id: T3.5
+    title: "capabilities handlers (direct on store; derivation orchestration)"
+    description: "Implement internal/api/v1/admin/capabilities handlers calling store directly (no internal/core layer, C1). Machine-readable wired features; source of truth for NodeInfo + README status (Phase 4). Keep thin orchestration for capabilities derivation (cross-store). Table-driven vs temp SQLite."
+    wave: 9
+    agent: gem-implementer
+    status: pending
+    phase: 3
+    covers: [D-4, handlers, capabilities, C1]
+    dependencies: [T0.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/admin/
+        description: "Admin handlers; capabilities domain"
+    acceptance_criteria:
+      - "Handlers call store directly; coverage >=90%."
+      - "Capabilities derived from actual wiring."
+    success_criteria:
+      - "go test ./... -race passes; coverage >=90%."
+    tech_stack: [Go 1.27, modernc.org/sqlite]
+    test_coverage: ">=90%"
+    handoff:
+      do_not_reinvestigate: ["Capabilities must reflect actual wiring, not a static list."]
+      required_test_first: "Write failing handler tests first."
+      target_files: [internal/api/v1/admin/]
+      minimal_change: "Capabilities handlers only."
+      acceptance_checks: ["direct on store", "derived from wiring", ">=90% coverage"]
+
+  - id: T2.6
+    title: "/me/* endpoints (self API registration + integration)"
+    description: "Register and wire all /me/* endpoints: GET/PATCH /me, DELETE /me (request + admin approval via pending_deletions), /me/onboarding, POST /me/tos, /me/export, /me/profile + publish/unpublish + avatar, /me/profile/links + reorder, /me/keys + revoke, /me/proofs + verify (wires internal/proofs), /me/credentials (409 on last), /me/sessions + revoke, /me/tokens (GET/DELETE + POST create programmatic token, show-once, scope-subset selection), /me/tokens/{family_id}. Thin handlers over store (T2.1-T2.5)."
+    wave: 10
+    agent: gem-implementer
+    status: pending
+    phase: 2
+    covers: [self-api, endpoints, M2, M3]
+    dependencies: [T1.3, T2.1, T2.2, T2.3, T2.4, T2.5]
+    conflicts_with: [T3.6]
+    context_files:
+      - path: internal/api/v1/me/
+        description: "Self endpoints"
+    acceptance_criteria:
+      - "All /me/* endpoints registered with correct scopes."
+      - "DELETE /me is request + admin approval via pending_deletions, not immediate cascade."
+      - "POST /me/tokens creates a programmatic token (show-once, scope-subset selection)."
+      - "ETag on GET for caching; no mandatory If-Match (C3)."
+      - "Cross-tenant IDOR matrix returns 404 for all tenant-scoped resources."
+    success_criteria:
+      - "go test ./... -race passes; scope matrix, ETag-on-GET, IDOR matrix green."
+    tech_stack: [Go 1.27]
+    test_coverage: "Thin handlers; logic in store"
+    handoff:
+      do_not_reinvestigate: ["Endpoint shapes fixed in endpoint_catalog.self; handlers stay thin over store."]
+      required_test_first: "Write failing endpoint tests (scope matrix, IDOR, ETag, token create) first."
+      target_files: [internal/api/v1/me/]
+      minimal_change: "Self endpoints only; do not touch admin routes."
+      acceptance_checks: ["scope matrix", "ETag-on-GET", "IDOR 404", "POST /me/tokens show-once", "DELETE /me -> pending_deletions"]
+
+  - id: T3.6
+    title: "/admin/* endpoints (admin API registration + integration)"
+    description: "Register and wire all /admin/* endpoints: tenants, users + invites (Idempotency-Key; email sent INSIDE the idempotent handler so replay short-circuits before handler -> no re-send), credentials, sessions:revoke, clients + secret:rotate (show-once), backup config/runs/restores (long-running, Idempotency-Key), moderation/takedowns, audit (real actor field A8), ipfs/pins (non-panicking CID validator; NO Idempotency-Key), tos, system/info (secrets redacted), deletion-requests (GET /admin/deletion-requests, POST /admin/deletion-requests/{id}:approve|:reject). Thin handlers over store (T3.1-T3.5)."
+    wave: 10
+    agent: gem-implementer
+    status: pending
+    phase: 3
+    covers: [admin-api, endpoints, A8, M2, M5, C6]
+    dependencies: [T1.3, T3.1, T3.2, T3.3, T3.4, T3.5]
+    conflicts_with: [T2.6]
+    context_files:
+      - path: internal/api/v1/admin/
+        description: "Admin endpoints"
+    acceptance_criteria:
+      - "All /admin/* endpoints registered; admin:* scopes require BOTH scope AND user.IsAdmin."
+      - "Non-admin 403 on every admin route."
+      - "Idempotency replay returns original response; email sent only on first execution (inside idempotent handler)."
+      - "Deletion-request endpoints: GET list, POST approve|reject; approve cascades, reject is no-op."
+      - "IPFS pin has NO Idempotency-Key (C6)."
+      - "Audit-log actor field populated from authenticated principal (A8)."
+      - "system/info redacts secrets."
+    success_criteria:
+      - "go test ./... -race passes; non-admin 403 matrix, idempotency replay (one email), deletion-request approve/reject, backup config->scheduler integration green."
+    tech_stack: [Go 1.27]
+    test_coverage: "Thin handlers; logic in store"
+    handoff:
+      do_not_reinvestigate: ["Endpoint shapes fixed in endpoint_catalog.admin; admin is INSTANCE-scoped."]
+      required_test_first: "Write failing endpoint tests (non-admin 403, idempotency replay, deletion-request approve/reject) first."
+      target_files: [internal/api/v1/admin/]
+      minimal_change: "Admin endpoints only; do not touch self routes."
+      acceptance_checks: ["non-admin 403", "idempotency replay one email", "deletion-request approve/reject", "actor field"]
+
+  - id: T2.7
+    title: "Phase 2 exit verification (self API)"
+    description: "Verify self API: scope matrix, ETag-on-GET tests, cross-tenant IDOR matrix returns 404, POST /me/tokens show-once, DELETE /me -> pending_deletions."
+    wave: 11
+    agent: gem-reviewer
+    status: pending
+    phase: 2
+    covers: [verification, gate]
+    dependencies: [T2.6]
+    conflicts_with: []
+    acceptance_criteria:
+      - "Scope matrix green."
+      - "ETag-on-GET tests green."
+      - "Cross-tenant IDOR matrix returns 404 for all tenant-scoped resources."
+      - "POST /me/tokens show-once + DELETE /me -> pending_deletions green."
+    success_criteria:
+      - "task lint, test -race, vet, vulncheck pass; coverage >=80%."
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  - id: T3.7
+    title: "Phase 3 exit verification (admin API)"
+    description: "Verify admin API: non-admin 403 on every admin route, idempotency replay test (one email), backup config->scheduler-start integration test, deletion-request approve/reject."
+    wave: 11
+    agent: gem-reviewer
+    status: pending
+    phase: 3
+    covers: [verification, gate]
+    dependencies: [T3.6]
+    conflicts_with: []
+    acceptance_criteria:
+      - "Non-admin 403 on every admin route."
+      - "Idempotency replay test green (one email, same token)."
+      - "Backup config->scheduler-start integration test green."
+      - "Deletion-request approve/reject test green."
+    success_criteria:
+      - "task lint, test -race, vet, vulncheck pass; coverage >=80%."
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PHASE 4 — PUBLIC API + TRUTH
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T4.1
+    title: "/api/v1/public/* endpoints"
+    description: "Implement GET /api/v1/public/profile (404 when unpublished, no enumeration), /public/keys, /public/proofs. Mirrors over store-backed profile/keys/proofs handlers."
+    wave: 12
+    agent: gem-implementer
+    status: pending
+    phase: 4
+    covers: [public-api, endpoints]
+    dependencies: [T2.2, T2.3, T2.4]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/public/
+        description: "Public endpoints"
+    acceptance_criteria:
+      - "Public profile 404 when unpublished; no enumeration."
+      - "Public keys/proofs served."
+    success_criteria:
+      - "go test ./... -race passes; 404-on-unpublished test green."
+    tech_stack: [Go 1.27]
+    test_coverage: "Thin handlers"
+    handoff:
+      do_not_reinvestigate: ["Endpoint shapes fixed in endpoint_catalog.public_mirrors."]
+      required_test_first: "Write failing public endpoint tests first."
+      target_files: [internal/api/v1/public/]
+      minimal_change: "Public endpoints only."
+      acceptance_checks: ["404 when unpublished", "no enumeration"]
+
+  - id: T4.2
+    title: "Capabilities truth + NodeInfo + README status"
+    description: "Derive capabilities from actual wiring (capabilities handlers). Source NodeInfo + README status from capabilities. Every README claim maps to a capabilities entry AND a passing E2E test."
+    wave: 12
+    agent: gem-implementer
+    status: pending
+    phase: 4
+    covers: [capabilities, nodeinfo, readme]
+    dependencies: [T3.5]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/v1/admin/
+        description: "Capabilities source of truth"
+    acceptance_criteria:
+      - "NodeInfo + README status sourced from capabilities."
+      - "Every README claim maps to a capabilities entry AND a passing E2E test."
+    success_criteria:
+      - "capabilities_truth test green (README claims subset capabilities, capabilities subset features with passing E2E)."
+    tech_stack: [Go 1.27]
+    test_coverage: "capabilities_truth test"
+    handoff:
+      do_not_reinvestigate: ["Capabilities must reflect actual wiring, not a static list."]
+      required_test_first: "Write capabilities_truth test first."
+      target_files: [internal/api/v1/admin/, README.md]
+      minimal_change: "Wire capabilities into NodeInfo/README; no unrelated edits."
+      acceptance_checks: ["README claims subset capabilities", "capabilities subset features with E2E"]
+
+  - id: T4.3
+    title: "Phase 4 exit verification (public + truth)"
+    description: "Verify public API + capabilities truth: every README claim maps to a capabilities entry AND a passing E2E test."
+    wave: 13
+    agent: gem-reviewer
+    status: pending
+    phase: 4
+    covers: [verification, gate]
+    dependencies: [T4.1, T4.2]
+    conflicts_with: []
+    acceptance_criteria:
+      - "capabilities_truth test green."
+      - "Public endpoints 404-on-unpublished + no-enumeration green."
+    success_criteria:
+      - "task lint, test -race, vet, vulncheck pass; coverage >=80%."
+    requires_review: true
+    review_depth: standard
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PHASE 5 — PANEL CLIENT
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T5.1
+    title: "web/shared: api.js + simple.css + embed.go"
+    description: "Implement internal/web/shared: api.js (reads __Host-csrf, sends X-CSRF-Token on unsafe methods, normalizes problem+json to ApiError, tracks ETag, handles 401/403/429, generates Idempotency-Key for invite + backup run/restore), vendored simple.css (D-9), embed.go (go:embed dist). Strict CSP, no inline script, no framework, no npm."
+    wave: 14
+    agent: gem-implementer
+    status: pending
+    phase: 5
+    covers: [D-9, thin-client, web-shared]
+    dependencies: []
+    conflicts_with: []
+    context_files:
+      - path: internal/web/shared/
+        description: "Shared client module"
+    acceptance_criteria:
+      - "api.js implements CSRF/ETag/problem+json/Idempotency-Key handling."
+      - "simple.css vendored (D-9); strict CSP with no external origins."
+      - "go:embed; no build step, no npm."
+    success_criteria:
+      - "Asset/CSP header tests green."
+    tech_stack: [Go 1.27, ES modules]
+    test_coverage: "Asset/CSP header assertions in Go"
+    handoff:
+      do_not_reinvestigate: ["Thin-client constraints fixed in thin_client + D-9; no framework."]
+      required_test_first: "Write asset/CSP header test first."
+      target_files: [internal/web/shared/]
+      minimal_change: "Shared client module only."
+      acceptance_checks: ["strict CSP", "no inline script", "go:embed"]
+
+  - id: T5.2
+    title: "web/panel client"
+    description: "Implement internal/web/panel (index.html, panel.js): client-side step machine driven by GET /api/v1/me/onboarding. Delete /panel/passkey flag toggle (set server-side on successful registration). New surfaces: keys, proofs+verify, credentials, sessions, tokens (incl create via POST /me/tokens), profile links reorder, publish toggle, avatar, export, deletion request."
+    wave: 15
+    agent: gem-implementer
+    status: pending
+    phase: 5
+    covers: [thin-client, panel]
+    dependencies: [T5.1]
+    conflicts_with: []
+    context_files:
+      - path: internal/web/panel/
+        description: "Panel client"
+    acceptance_criteria:
+      - "Panel is a client-side step machine driven by /me/onboarding."
+      - "All new surfaces present (keys, proofs, credentials, sessions, tokens incl create, links reorder, publish, avatar, export, deletion request)."
+      - "No /panel/passkey flag toggle; set server-side."
+    success_criteria:
+      - "Asset/CSP header tests green; panel loads via go:embed."
+    tech_stack: [Go 1.27, ES modules]
+    test_coverage: "Asset/CSP header assertions in Go"
+    handoff:
+      do_not_reinvestigate: ["Thin-client constraints fixed in thin_client; no framework."]
+      required_test_first: "Write asset/CSP header test first."
+      target_files: [internal/web/panel/]
+      minimal_change: "Panel client only."
+      acceptance_checks: ["step machine", "all surfaces", "no passkey toggle"]
+
+  - id: T5.3
+    title: "legacyforms: no-JS ToS + profile path adapters"
+    description: "Implement internal/legacyforms: no-JS form adapters over store (D-7) for ToS accept and profile edit (303-redirect). Render the hidden csrf_token field in each form (synchronizer-token pattern, B1) so the no-JS POST passes CSRF. WebAuthn stays JS-only."
+    wave: 15
+    agent: gem-implementer
+    status: pending
+    phase: 5
+    covers: [D-7, legacyforms, no-js, B1]
+    dependencies: [T2.1, T2.2]
+    conflicts_with: []
+    context_files:
+      - path: internal/legacyforms/
+        description: "No-JS form adapters"
+    acceptance_criteria:
+      - "No-JS ToS accept + profile edit via form-POST adapters (303-redirect)."
+      - "Each form renders hidden csrf_token field; no-JS POST passes CSRF (synchronizer-token)."
+      - "WebAuthn stays JS-only."
+    success_criteria:
+      - "legacyforms no-JS ToS + profile path test green (incl CSRF form-encoded path)."
+    tech_stack: [Go 1.27]
+    test_coverage: ">=90% on adapters"
+    handoff:
+      do_not_reinvestigate: ["D-7 fixed: keep no-JS fallback for ToS + profile only; B1: hidden csrf_token field."]
+      required_test_first: "Write failing no-JS path test (incl CSRF form-encoded) first."
+      target_files: [internal/legacyforms/]
+      minimal_change: "No-JS adapters only."
+      acceptance_checks: ["303-redirect", "ToS + profile only", "hidden csrf_token field"]
+
+  - id: T5.4
+    title: "CSP + asset handler + embed"
+    description: "Implement asset handler + go:embed wiring for web/ assets. Strict CSP (default-src 'none'; script-src 'self'; connect-src 'self'; no external origins), no inline script."
+    wave: 15
+    agent: gem-implementer
+    status: pending
+    phase: 5
+    covers: [D-9, csp, embed]
+    dependencies: [T5.1]
+    conflicts_with: [T6.1]
+    context_files:
+      - path: internal/web/embed.go
+        description: "go:embed + asset handler"
+    acceptance_criteria:
+      - "Assets served via go:embed with strict CSP headers."
+      - "No inline script; no external origins."
+    success_criteria:
+      - "Asset/CSP header tests green."
+    tech_stack: [Go 1.27]
+    test_coverage: "Asset/CSP header assertions"
+    handoff:
+      do_not_reinvestigate: ["CSP policy fixed in D-9; do not loosen."]
+      required_test_first: "Write asset/CSP header test first."
+      target_files: [internal/web/embed.go]
+      minimal_change: "Asset handler + embed only."
+      acceptance_checks: ["strict CSP", "no inline script"]
+
+  - id: T5.5
+    title: "Phase 5 exit verification (panel client)"
+    description: "Verify panel client: asset/CSP header tests, legacyforms no-JS ToS + profile path test (incl CSRF form-encoded)."
+    wave: 16
+    agent: gem-reviewer
+    status: pending
+    phase: 5
+    covers: [verification, gate]
+    dependencies: [T5.2, T5.3, T5.4]
+    conflicts_with: []
+    acceptance_criteria:
+      - "Asset/CSP header tests green."
+      - "legacyforms no-JS ToS + profile path test green (incl CSRF form-encoded)."
+    success_criteria:
+      - "task lint, test -race, vet, vulncheck pass; coverage >=80%."
+    requires_review: true
+    review_depth: standard
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PHASE 6 — ADMIN CLIENT
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T6.1
+    title: "web/admin client"
+    description: "Implement internal/web/admin (index.html, admin.js): all admin views (dashboard, tenants, users+invite, clients+secret rotation, backups, moderation, audit, IPFS pins, system info, deletion requests). Session-cookie auth like panel (supersedes bearer-only AdminGuard HTML-form gap, B13)."
+    wave: 17
+    agent: gem-implementer
+    status: pending
+    phase: 6
+    covers: [thin-client, admin, B13, M2]
+    dependencies: [T5.1]
+    conflicts_with: [T5.4]
+    context_files:
+      - path: internal/web/admin/
+        description: "Admin client"
+    acceptance_criteria:
+      - "All admin views present (incl deletion requests)."
+      - "Session-cookie auth like panel (B13 resolved by D-6 + admin thin client)."
+    success_criteria:
+      - "Asset/CSP header tests green; smoke test every admin API route reachable from a view."
+    tech_stack: [Go 1.27, ES modules]
+    test_coverage: "Asset/CSP header assertions + route smoke test"
+    handoff:
+      do_not_reinvestigate: ["Thin-client constraints fixed in thin_client; no framework."]
+      required_test_first: "Write asset/CSP header test first."
+      target_files: [internal/web/admin/]
+      minimal_change: "Admin client only."
+      acceptance_checks: ["all admin views", "session-cookie auth"]
+
+  - id: T6.2
+    title: "Phase 6 exit verification (admin client)"
+    description: "Verify admin client: asset/CSP tests, smoke test every admin API route reachable from a view."
+    wave: 18
+    agent: gem-reviewer
+    status: pending
+    phase: 6
+    covers: [verification, gate]
+    dependencies: [T6.1]
+    conflicts_with: []
+    acceptance_criteria:
+      - "Asset/CSP header tests green."
+      - "Every admin API route reachable from a view (smoke test)."
+    success_criteria:
+      - "task lint, test -race, vet, vulncheck pass; coverage >=80%."
+    requires_review: true
+    review_depth: standard
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PHASE 7 — DECOMMISSION
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T7.1
+    title: "Decommission old HTTP layers (feature-parity gated)"
+    description: "BEFORE deleting, run a feature-parity gate: enumerate every function in internal/server/panel.go templates + internal/admin/{users,backup}.go HTTP layers and assert each maps to an API endpoint + client surface (R4). Only then delete those files. /panel/* and /admin/* become client shells + legacyforms."
+    wave: 19
+    agent: gem-implementer
+    status: pending
+    phase: 7
+    covers: [decommission, cleanup, R4]
+    dependencies: [T5.2, T5.3, T6.1]
+    conflicts_with: []
+    context_files:
+      - path: internal/server/panel.go
+        description: "Old panel templates to delete (after parity gate)"
+      - path: internal/admin/
+        description: "Old admin HTTP layers to delete (after parity gate)"
+    acceptance_criteria:
+      - "Feature-parity gate: every function in panel.go + admin/{users,backup}.go maps to an API endpoint + client surface."
+      - "Old panel templates + admin HTTP layers deleted only after parity gate passes."
+      - "/panel/* and /admin/* are client shells + legacyforms."
+    success_criteria:
+      - "go test ./... -race passes after deletion; parity gate green."
+    tech_stack: [Go 1.27]
+    test_coverage: "Existing tests updated for client shells"
+    handoff:
+      do_not_reinvestigate: ["Decommission scope fixed in phases.7; delete only listed files, behind the parity gate."]
+      required_test_first: "Write feature-parity gate test first; update failing tests for client shells."
+      target_files: [internal/server/panel.go, internal/admin/]
+      minimal_change: "Delete listed HTTP layers only, after parity gate."
+      acceptance_checks: ["feature-parity gate", "old layers deleted", "client shells in place"]
+
+  - id: T7.2
+    title: "Deadcode clean + html/template audit"
+    description: "Run deadcode clean; ensure no html/template outside web/ and internal/protocols/hyperlink."
+    wave: 20
+    agent: gem-code-simplifier
+    status: pending
+    phase: 7
+    covers: [deadcode, cleanup]
+    dependencies: [T7.1]
+    conflicts_with: []
+    acceptance_criteria:
+      - "Deadcode clean."
+      - "No html/template outside web/ and internal/protocols/hyperlink."
+    success_criteria:
+      - "deadcode clean; html/template audit green."
+    tech_stack: [Go 1.27]
+    test_coverage: "N/A (cleanup)"
+    handoff:
+      do_not_reinvestigate: ["Constraint fixed in constraints: no html/template outside web/ and hyperlink."]
+      required_test_first: "N/A; audit after deletion."
+      target_files: [internal/]
+      minimal_change: "Remove dead code only; no behavior change."
+      acceptance_checks: ["deadcode clean", "html/template scoped"]
+
+  - id: T7.3
+    title: "Phase 7 exit verification (decommission)"
+    description: "Verify decommission: deadcode clean, no html/template outside web/ and hyperlink."
+    wave: 20
+    agent: gem-reviewer
+    status: pending
+    phase: 7
+    covers: [verification, gate]
+    dependencies: [T7.1]
+    conflicts_with: []
+    acceptance_criteria:
+      - "Deadcode clean."
+      - "No html/template outside web/ and internal/protocols/hyperlink."
+    success_criteria:
+      - "task lint, test -race, vet, vulncheck pass; coverage >=80%."
+    requires_review: true
+    review_depth: standard
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # PHASE 8 — HARDENING & DOCS
+  # ─────────────────────────────────────────────────────────────────────────
+  - id: T8.1
+    title: "Rate limits tuned + load test on /auth/*"
+    description: "Tune per-IP token bucket rate limits; 429 with Retry-After + RateLimit-* headers. Load test on /auth/*."
+    wave: 21
+    agent: gem-implementer
+    status: pending
+    phase: 8
+    covers: [rate-limit, hardening, C5]
+    dependencies: [T1.4]
+    conflicts_with: []
+    context_files:
+      - path: internal/api/middleware/ratelimit.go
+        description: "Rate limit middleware"
+    acceptance_criteria:
+      - "Rate limits tuned (per-IP only); 429 with Retry-After + RateLimit-* headers."
+      - "Load test on /auth/* passes."
+    success_criteria:
+      - "Load test green; rate-limit tests green."
+    tech_stack: [Go 1.27]
+    test_coverage: "Rate-limit tests"
+    handoff:
+      do_not_reinvestigate: ["Rate-limit model fixed in api_conventions.rate_limits (per-IP only)."]
+      required_test_first: "Write rate-limit test first."
+      target_files: [internal/api/middleware/ratelimit.go]
+      minimal_change: "Rate limit tuning only."
+      acceptance_checks: ["429 + Retry-After", "load test"]
+
+  - id: T8.2
+    title: "docs/reference/api/ (generated from spec)"
+    description: "Generate docs/reference/api/ from the OpenAPI spec."
+    wave: 21
+    agent: gem-documentation-writer
+    status: pending
+    phase: 8
+    covers: [docs, api-reference]
+    dependencies: [T1.5]
+    conflicts_with: []
+    acceptance_criteria:
+      - "docs/reference/api/ generated from spec."
+      - "Docs build passes."
+    success_criteria:
+      - "Docs build green."
+    task_type: documentation
+    audience: developers
+    coverage_matrix: [openapi, api-reference]
+
+  - id: T8.3
+    title: "docs/howto/{user,admin,developer}"
+    description: "Write docs/howto/user, docs/howto/admin, docs/howto/developer covering the new API + thin clients."
+    wave: 21
+    agent: gem-documentation-writer
+    status: pending
+    phase: 8
+    covers: [docs, howto]
+    dependencies: [T5.2, T6.1]
+    conflicts_with: []
+    acceptance_criteria:
+      - "User, admin, developer howto docs written."
+    success_criteria:
+      - "Docs build passes."
+    task_type: documentation
+    audience: end-users
+    coverage_matrix: [user, admin, developer]
+
+  - id: T8.4
+    title: "ADRs D-1..D-9"
+    description: "Draft ADRs documenting decisions D-1..D-9 (identity-host-only control plane, stdlib routing, RFC 9457, handlers-call-store-directly [D-4 REVISED: no core/* layer; thin orchestration only where cross-store], OpenAPI source-of-truth + drift, browser/programmatic auth split, no-JS fallback, audience separation, vendored CSS + strict CSP). Decisions are signed off; ADRs record rationale. Note the adopted simplifications C1-C6 in the D-4 ADR."
+    wave: 21
+    agent: gem-documentation-writer
+    status: pending
+    phase: 8
+    covers: [docs, adr]
+    dependencies: []
+    conflicts_with: []
+    acceptance_criteria:
+      - "ADRs D-1..D-9 drafted with rationale; D-4 records the handlers-call-store-directly revision."
+    success_criteria:
+      - "Docs build passes; each ADR references its decision."
+    task_type: documentation
+    audience: developers
+    coverage_matrix: [D-1, D-2, D-3, D-4, D-5, D-6, D-7, D-8, D-9]
+
+  - id: T8.5
+    title: "CHANGELOG (breaking-change + migration notes)"
+    description: "Write CHANGELOG covering breaking changes: strict config additions (auth.session.dual_read, api.cors_origins), session dual-read window (operator flips auth.session.dual_read to false and drops old JWT cookies after one release), audience separation (D-8), CSRF on cookie unsafe methods (bearer exempt; hidden csrf_token field for no-JS forms), GET /invite/{token} anonymous session-mint, decommissioned HTTP layers, POST /me/tokens, deletion-request endpoints."
+    wave: 21
+    agent: gem-documentation-writer
+    status: pending
+    phase: 8
+    covers: [docs, changelog, migration, R2]
+    dependencies: [T7.1]
+    conflicts_with: []
+    acceptance_criteria:
+      - "CHANGELOG documents breaking changes + operator migration notes (incl dual_read flip-to-false)."
+    success_criteria:
+      - "Every feature claim maps to a capabilities entry AND a passing E2E test."
+    task_type: documentation
+    audience: stakeholders
+    coverage_matrix: [breaking-changes, migration, operator-notes]
+
+  - id: T8.6
+    title: "Phase 8 exit verification (hardening + docs)"
+    description: "Verify hardening + docs: load test on /auth/*, docs build, per-package coverage >=80% (store >=90%)."
+    wave: 22
+    agent: gem-reviewer
+    status: pending
+    phase: 8
+    covers: [verification, gate]
+    dependencies: [T8.1, T8.2, T8.3, T8.4, T8.5]
+    conflicts_with: []
+    acceptance_criteria:
+      - "Load test on /auth/* green."
+      - "Docs build green."
+      - "Per-package coverage >=80% (store >=90%)."
+    success_criteria:
+      - "task lint, test -race, vet, vulncheck pass; scripts/coverage-gate.sh green."
+    requires_review: true
+    review_depth: full
+    review_security_sensitive: true

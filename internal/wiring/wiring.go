@@ -8,7 +8,6 @@ import (
 	"context"
 	"crypto/rsa"
 	"errors"
-	"strings"
 
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/protocols/remotestorage"
@@ -114,12 +113,25 @@ func (a *ACLChecker) ownsTenant(ctx context.Context, webID string) bool {
 // Ensure ACLChecker satisfies solid.ACLChecker.
 var _ solid.ACLChecker = (*ACLChecker)(nil)
 
-// ScopesContains reports whether a scope list contains a scope (or a
-// hierarchical prefix, e.g. "rw" implies "r").
+// scopeImplies maps a granted scope to the set of scopes it satisfies.
+// Exact matching only - the implication table is the sole source of
+// hierarchical relationships. No prefix logic.
+var scopeImplies = map[string][]string{
+	// Add implications only when the API taxonomy needs them, e.g.
+	// "profile:write": {"profile:read"}.
+}
+
+// ScopesContains reports whether scopes contains want, either by exact match
+// or via an explicit implication in scopeImplies.
 func ScopesContains(scopes []string, want string) bool {
 	for _, s := range scopes {
-		if s == want || strings.HasPrefix(s, want) {
+		if s == want {
 			return true
+		}
+		for _, implied := range scopeImplies[s] {
+			if implied == want {
+				return true
+			}
 		}
 	}
 	return false

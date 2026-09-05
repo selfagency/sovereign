@@ -65,6 +65,12 @@ linters:
       - path: internal/protocols/atproto/repo\.go
         linters:
           - staticcheck
+      # csrf.go sets HttpOnly=false on the __Host-csrf cookie so JS can read
+      # it for the double-submit header path. G124 flags the missing HttpOnly;
+      # it is intentionally false here (the token is not a session secret).
+      - path: internal/api/middleware/csrf\.go
+        linters:
+          - gosec
 
 formatters:
   enable:
