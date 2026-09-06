@@ -10,11 +10,13 @@ package self
 import (
 	"log/slog"
 
+	"github.com/selfagency/sovereign/internal/api/v1/me/credentials"
 	"github.com/selfagency/sovereign/internal/api/v1/me/identity"
 	"github.com/selfagency/sovereign/internal/api/v1/me/keys"
 	"github.com/selfagency/sovereign/internal/api/v1/me/profile"
 	meproofs "github.com/selfagency/sovereign/internal/api/v1/me/proofs"
 	"github.com/selfagency/sovereign/internal/api/v1/me/sessions"
+	"github.com/selfagency/sovereign/internal/api/v1/me/tokens"
 	"github.com/selfagency/sovereign/internal/proofs"
 	"github.com/selfagency/sovereign/internal/storage"
 	"github.com/selfagency/sovereign/internal/store"
@@ -24,11 +26,13 @@ import (
 // route table binds against. Fields are exported so router.go can reference
 // the method values (sh.Identity.Get, sh.Profile.Put, ...).
 type Handler struct {
-	Identity *identity.Handler
-	Profile  *profile.Handler
-	Keys     *keys.Handler
-	Proofs   *meproofs.Handler
-	Sessions *sessions.Handler
+	Identity    *identity.Handler
+	Profile     *profile.Handler
+	Keys        *keys.Handler
+	Proofs      *meproofs.Handler
+	Sessions    *sessions.Handler
+	Tokens      *tokens.Handler
+	Credentials *credentials.Handler
 }
 
 // New builds a self Handler against the store, the blob backend (profile
@@ -37,10 +41,12 @@ type Handler struct {
 // standard slog default in each sub-handler.
 func New(st *store.Store, blobs storage.Backend, verifier *proofs.Verifier, logger *slog.Logger) *Handler {
 	return &Handler{
-		Identity: identity.New(st, logger),
-		Profile:  profile.New(st, blobs, logger),
-		Keys:     keys.New(st, logger),
-		Proofs:   meproofs.New(st, verifier, logger),
-		Sessions: sessions.New(st, logger),
+		Identity:    identity.New(st, logger),
+		Profile:     profile.New(st, blobs, logger),
+		Keys:        keys.New(st, logger),
+		Proofs:      meproofs.New(st, verifier, logger),
+		Sessions:    sessions.New(st, logger),
+		Tokens:      tokens.New(st, logger),
+		Credentials: credentials.New(st, logger),
 	}
 }

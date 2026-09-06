@@ -19,6 +19,7 @@ import (
 	"github.com/selfagency/sovereign/internal/api/v1/admin/capabilities"
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
+	"github.com/selfagency/sovereign/internal/api/v1/self"
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/endpoints"
 	"github.com/selfagency/sovereign/internal/mail"
@@ -379,7 +380,12 @@ func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, erro
 
 	ah := v1auth.New(s.store, s.authStore.SigningKeyMaterial(), "https://id."+s.cfg.Domain, waHandler, s.logger)
 
-	routes := api.ToRouteInfo(api.RoutesForAPI(h, ah))
+	// Self handler for the /me/* self-service routes. blobs is the shared
+	// storage backend (profile avatars); verifier is nil so the proofs
+	// sub-handler builds its own strict SSRF-safe default.
+	sh := self.New(s.store, s.blobs, nil, s.logger)
+
+	routes := api.ToRouteInfo(api.RoutesForSelf(h, ah, sh))
 	life := middleware.NewHandler(&middleware.ChainConfig{
 		Routes:        routes,
 		Logger:        s.logger,

@@ -30,6 +30,7 @@ var migrations = []migration{
 	{version: 7, name: "sessions_and_idempotency", up: migrateV7},
 	{version: 8, name: "backup_and_takedown_and_tos", up: migrateV8},
 	{version: 9, name: "pending_deletions_and_tos_docs", up: migrateV9},
+	{version: 10, name: "programmatic_api_tokens", up: migrateV10},
 }
 
 // migrate runs all pending migrations inside transactions and records each
@@ -433,6 +434,34 @@ func migrateV9(ctx context.Context, tx *sql.Tx) error {
 			continue
 		}
 		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN updated_at TEXT`); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateV10 adds programmatic API tokens for the /api/v1/me/tokens surface.
+// api_tokens stores only the SHA-256 hash of each token; the raw token is
+// returned to the client exactly once at creation. FamilyID groups tokens
+// minted from a single grant so a revoked family revokes every member.
+func migrateV10(ctx context.Context, tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS api_tokens (
+			id         TEXT PRIMARY KEY,
+			user_id    TEXT NOT NULL,
+			token_hash TEXT NOT NULL UNIQUE,
+			family_id  TEXT NOT NULL,
+			name       TEXT,
+			scopes     TEXT NOT NULL,
+			expires_at TIMESTAMP,
+			last_used_at TIMESTAMP,
+			created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_tokens_user ON api_tokens(user_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_api_tokens_family ON api_tokens(family_id)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
 			return err
 		}
 	}

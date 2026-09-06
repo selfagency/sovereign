@@ -836,6 +836,107 @@ paths:
           $ref: "#/components/responses/Problem"
         "401":
           $ref: "#/components/responses/Problem"
+  /me/tokens:
+    get:
+      operationId: listSelfTokens
+      summary: List the current principal's programmatic API tokens (metadata only)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Programmatic tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/APIToken"
+        "401":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createSelfToken
+      summary: "Create a programmatic API token (show-once: the raw token is returned exactly once)"
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APITokenCreateRequest"
+      responses:
+        "201":
+          description: Created token with the raw value (show-once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APITokenCreateResponse"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/tokens/{family_id}:
+    delete:
+      operationId: revokeSelfToken
+      summary: Revoke a programmatic API token family
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: family_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Token revoked
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/credentials:
+    get:
+      operationId: listSelfCredentials
+      summary: List the current principal's WebAuthn credentials
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: WebAuthn credentials
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WebAuthnCredential"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/credentials/{id}:
+    delete:
+      operationId: deleteSelfCredential
+      summary: Delete one WebAuthn credential (409 when it is the last passkey)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Credential deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
   /admin/tenants:
     get:
       operationId: adminListTenants
@@ -1831,6 +1932,63 @@ components:
           type: string
           format: date-time
         last_seen:
+          type: string
+          format: date-time
+
+    APIToken:
+      type: object
+      description: A programmatic API token (metadata only; the raw token is show-once and never re-served)
+      properties:
+        id:
+          type: string
+        family_id:
+          type: string
+        name:
+          type: string
+        scopes:
+          type: array
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    APITokenCreateRequest:
+      type: object
+      required: [scopes]
+      properties:
+        scopes:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        name:
+          type: string
+    APITokenCreateResponse:
+      type: object
+      description: Created token. token carries the raw value, returned exactly once (show-once).
+      allOf:
+        - $ref: "#/components/schemas/APIToken"
+      properties:
+        token:
+          type: string
+    WebAuthnCredential:
+      type: object
+      description: A registered passkey. Public key material and attestation data are never served.
+      properties:
+        id:
+          type: string
+        credential_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
           type: string
           format: date-time
 

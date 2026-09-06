@@ -174,6 +174,8 @@ func selfRoutes(sh *self.Handler) []Route {
 	keysList, keysGet, keysCreate, keysDelete, keysRevoke := stub(), stub(), stub(), stub(), stub()
 	proofsList, proofsGet, proofsCreate, proofsDelete, proofsVerify := stub(), stub(), stub(), stub(), stub()
 	sessList, sessRevoke, sessRevokeAll := stub(), stub(), stub()
+	tokList, tokCreate, tokRevoke := stub(), stub(), stub()
+	credList, credDelete := stub(), stub()
 	if sh != nil {
 		identityGet, identityUpdate, identityDelete = sh.Identity.Get, sh.Identity.Update, sh.Identity.RequestDeletion
 		identityOnboarding, identityToS, identityExport = sh.Identity.OnboardingState, sh.Identity.AcceptToS, sh.Identity.Export
@@ -184,6 +186,8 @@ func selfRoutes(sh *self.Handler) []Route {
 		keysList, keysGet, keysCreate, keysDelete, keysRevoke = sh.Keys.List, sh.Keys.Get, sh.Keys.Create, sh.Keys.Delete, sh.Keys.Revoke
 		proofsList, proofsGet, proofsCreate, proofsDelete, proofsVerify = sh.Proofs.List, sh.Proofs.Get, sh.Proofs.Create, sh.Proofs.Delete, sh.Proofs.Verify
 		sessList, sessRevoke, sessRevokeAll = sh.Sessions.List, sh.Sessions.Revoke, sh.Sessions.RevokeAll
+		tokList, tokCreate, tokRevoke = sh.Tokens.List, sh.Tokens.Create, sh.Tokens.Revoke
+		credList, credDelete = sh.Credentials.List, sh.Credentials.Delete
 	}
 	return []Route{
 		{Method: http.MethodGet, Path: "/api/v1/me", Scope: "self:read", Timeout: 5 * time.Second, Handler: identityGet},
@@ -216,6 +220,14 @@ func selfRoutes(sh *self.Handler) []Route {
 		{Method: http.MethodGet, Path: "/api/v1/me/sessions", Scope: "sessions:read", Timeout: 5 * time.Second, Handler: sessList},
 		{Method: http.MethodDelete, Path: "/api/v1/me/sessions/{id}", Scope: "sessions:revoke", Timeout: 10 * time.Second, Handler: sessRevoke},
 		{Method: http.MethodDelete, Path: "/api/v1/me/sessions", Scope: "sessions:revoke", Timeout: 10 * time.Second, Handler: sessRevokeAll},
+		// Programmatic API tokens (create is show-once: the raw token is returned
+		// exactly once; list/revoke expose metadata only).
+		{Method: http.MethodGet, Path: "/api/v1/me/tokens", Scope: "tokens:read", Timeout: 5 * time.Second, Handler: tokList},
+		{Method: http.MethodPost, Path: "/api/v1/me/tokens", Scope: "tokens:write", Timeout: 10 * time.Second, Handler: tokCreate},
+		{Method: http.MethodDelete, Path: "/api/v1/me/tokens/{family_id}", Scope: "tokens:revoke", Timeout: 10 * time.Second, Handler: tokRevoke},
+		// WebAuthn credentials.
+		{Method: http.MethodGet, Path: "/api/v1/me/credentials", Scope: "credentials:read", Timeout: 5 * time.Second, Handler: credList},
+		{Method: http.MethodDelete, Path: "/api/v1/me/credentials/{id}", Scope: "credentials:write", Timeout: 10 * time.Second, Handler: credDelete},
 	}
 }
 

@@ -233,3 +233,34 @@ type CursorList[T any] struct {
 	Data       []T     `json:"data"`
 	NextCursor *string `json:"next_cursor"`
 }
+
+// APIToken is a programmatic API token. TokenHash and LastUsedAt are only
+// present on list responses; the raw token is show-once at creation and never
+// included here.
+type APIToken struct {
+	ID         string     `json:"id"`
+	FamilyID   string     `json:"family_id"`
+	Name       string     `json:"name,omitempty"`
+	Scopes     []string   `json:"scopes"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// APITokenCreateResponse is the create-token response. Token carries the raw
+// token, returned exactly once (show-once); it is never re-readable or stored
+// in plaintext.
+type APITokenCreateResponse struct {
+	APIToken
+	Token string `json:"token"`
+}
+
+// WebAuthnCredential is a passkey registered for the principal. Public key
+// material is exposed (it is public), but the full go-webauthn credential Data
+// is never served.
+type WebAuthnCredential struct {
+	ID           string     `json:"id"`
+	CredentialID string     `json:"credential_id"`
+	CreatedAt    time.Time  `json:"created_at"`
+	LastUsedAt   *time.Time `json:"last_used_at"`
+}
