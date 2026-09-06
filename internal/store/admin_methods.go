@@ -153,6 +153,36 @@ func (s *Store) ListAuditPage(ctx context.Context, tenantID string, limit, offse
 	return out, total, rows.Err()
 }
 
+// ListAuditAllPage returns a page of audit entries across ALL tenants
+// (instance-scoped, newest first) plus the total count. The admin audit
+// endpoint uses this instead of ListAuditPage so an instance admin can see
+// the whole log, not just one tenant's.
+func (s *Store) ListAuditAllPage(ctx context.Context, limit, offset int) ([]AuditEntry, int, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("store: list audit page: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, actor, action, target, detail, created_at
+		 FROM audit_log ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("store: list audit page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.TenantID, &e.Actor, &e.Action, &e.Target, &e.Detail, &e.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, e)
+	}
+	return out, total, rows.Err()
+}
+
 // ListClientsPage returns a page of OIDC clients plus the total count.
 func (s *Store) ListClientsPage(ctx context.Context, limit, offset int) ([]Client, int, error) {
 	if limit <= 0 {

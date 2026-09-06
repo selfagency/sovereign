@@ -13,6 +13,7 @@ import (
 	"github.com/selfagency/sovereign/internal/api/dto"
 	"github.com/selfagency/sovereign/internal/api/middleware"
 	"github.com/selfagency/sovereign/internal/api/problem"
+	"github.com/selfagency/sovereign/internal/api/v1/admin"
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
 	"github.com/selfagency/sovereign/internal/api/v1/self"
@@ -102,6 +103,13 @@ func RoutesForSelf(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler) []Rout
 	return routesFor(h, ah, sh)
 }
 
+// RoutesForAdmin returns the current route set with the given meta, auth,
+// self, and admin handlers wired. Pass nil for the admin handler to keep the
+// /admin/* routes as 501 stubs (the drift test checks parity only).
+func RoutesForAdmin(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler, adm *admin.Handler) []Route {
+	return routesFor(h, ah, sh, adm)
+}
+
 // Routes returns the current route set with the Phase-1 default meta handler
 // (capabilities web_authn+oidc, empty version) and 501 auth stubs. Production
 // wiring uses RoutesForAPI with a fully-wired auth handler.
@@ -110,8 +118,13 @@ func Routes() []Route {
 }
 
 // routesFor is the shared route-table constructor. When ah is nil, the auth
-// routes are 501 stubs; otherwise they delegate to the auth handler.
-func routesFor(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler) []Route {
+// routes are 501 stubs; otherwise they delegate to the auth handler. sh and
+// adm behave the same way for the self and admin routes.
+func routesFor(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler, adm ...*admin.Handler) []Route {
+	var a *admin.Handler
+	if len(adm) > 0 {
+		a = adm[0]
+	}
 	return append([]Route{
 		// Meta / health / ready (anonymous).
 		{Method: http.MethodGet, Path: "/api/v1/meta/capabilities", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Capabilities},
@@ -119,7 +132,7 @@ func routesFor(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler) []Route {
 		{Method: http.MethodGet, Path: "/api/v1/health", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Health},
 		{Method: http.MethodGet, Path: "/api/v1/ready", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Ready},
 		{Method: http.MethodGet, Path: "/api/v1/openapi.json", Anonymous: true, Timeout: 5 * time.Second, Handler: h.OpenAPI},
-	}, append(authRoutes(ah), selfRoutes(sh)...)...)
+	}, append(append(authRoutes(ah), selfRoutes(sh)...), adminRoutes(a)...)...)
 }
 
 // authRoutes builds the auth/session/webauthn route set. When ah is nil the
@@ -203,6 +216,72 @@ func selfRoutes(sh *self.Handler) []Route {
 		{Method: http.MethodGet, Path: "/api/v1/me/sessions", Scope: "sessions:read", Timeout: 5 * time.Second, Handler: sessList},
 		{Method: http.MethodDelete, Path: "/api/v1/me/sessions/{id}", Scope: "sessions:revoke", Timeout: 10 * time.Second, Handler: sessRevoke},
 		{Method: http.MethodDelete, Path: "/api/v1/me/sessions", Scope: "sessions:revoke", Timeout: 10 * time.Second, Handler: sessRevokeAll},
+	}
+}
+
+// adminRoutes builds the /admin/* instance-admin route set. When adm is nil
+// the handlers are 501 stubs; otherwise they delegate to the admin handler.
+// All admin routes declare an admin:* coarse scope (enforced by the scope
+// middleware alongside IsAdmin). GET routes get a 5s timeout; mutations get
+// 10s. Backup run/restore triggers are LongRunning (exempt from the per-route
+// timeout) and Idempotent (an Idempotency-Key is required so a replay does
+// not double-run). None are anonymous.
+func adminRoutes(adm *admin.Handler) []Route {
+	// Resolve the handlers once; referencing a method value on a nil receiver
+	// panics, so only bind when adm is non-nil.
+	tenantsList, tenantsGet, tenantsCreate, tenantsDelete := stub(), stub(), stub(), stub()
+	clientsList, clientsGet, clientsCreate, clientsDelete, clientsRotate := stub(), stub(), stub(), stub(), stub()
+	modList, modCreate, modGet, modDelete := stub(), stub(), stub(), stub()
+	cfgGet, cfgPut, runsList, runsTrigger, runGet := stub(), stub(), stub(), stub(), stub()
+	restoresList, restoreTrigger := stub(), stub()
+	auditList := stub()
+	deletionsList, deletionsApprove, deletionsReject := stub(), stub(), stub()
+	systemInfo := stub()
+	if adm != nil {
+		tenantsList, tenantsGet, tenantsCreate, tenantsDelete = adm.Tenants.List, adm.Tenants.GetByID, adm.Tenants.Create, adm.Tenants.Delete
+		clientsList, clientsGet, clientsCreate, clientsDelete, clientsRotate = adm.Clients.ListClients, adm.Clients.ClientByID, adm.Clients.CreateClient, adm.Clients.DeleteClient, adm.Clients.RotateSecret
+		modList, modCreate, modGet, modDelete = adm.Moderation.List, adm.Moderation.Create, adm.Moderation.GetByID, adm.Moderation.Delete
+		cfgGet, cfgPut, runsList, runsTrigger, runGet = adm.Backup.GetConfig, adm.Backup.PutConfig, adm.Backup.ListRuns, adm.Backup.TriggerRun, adm.Backup.RunByID
+		restoresList, restoreTrigger = adm.Backup.ListRestores, adm.Backup.Restore
+		auditList = adm.Audit.List
+		deletionsList, deletionsApprove, deletionsReject = adm.Deletions.List, adm.Deletions.Approve, adm.Deletions.Reject
+		systemInfo = adm.System.Info
+	}
+	return []Route{
+		// Tenants.
+		{Method: http.MethodGet, Path: "/api/v1/admin/tenants", Scope: "admin:tenants:read", Timeout: 5 * time.Second, Handler: tenantsList},
+		{Method: http.MethodPost, Path: "/api/v1/admin/tenants", Scope: "admin:tenants:write", Timeout: 10 * time.Second, Handler: tenantsCreate},
+		{Method: http.MethodGet, Path: "/api/v1/admin/tenants/{id}", Scope: "admin:tenants:read", Timeout: 5 * time.Second, Handler: tenantsGet},
+		{Method: http.MethodDelete, Path: "/api/v1/admin/tenants/{id}", Scope: "admin:tenants:write", Timeout: 10 * time.Second, Handler: tenantsDelete},
+		// OIDC clients.
+		{Method: http.MethodGet, Path: "/api/v1/admin/clients", Scope: "admin:clients:read", Timeout: 5 * time.Second, Handler: clientsList},
+		{Method: http.MethodPost, Path: "/api/v1/admin/clients", Scope: "admin:clients:write", Timeout: 10 * time.Second, Handler: clientsCreate},
+		{Method: http.MethodGet, Path: "/api/v1/admin/clients/{id}", Scope: "admin:clients:read", Timeout: 5 * time.Second, Handler: clientsGet},
+		{Method: http.MethodDelete, Path: "/api/v1/admin/clients/{id}", Scope: "admin:clients:write", Timeout: 10 * time.Second, Handler: clientsDelete},
+		{Method: http.MethodPost, Path: "/api/v1/admin/clients/{id}/secret/rotate", Scope: "admin:clients:write", Timeout: 10 * time.Second, Handler: clientsRotate},
+		// Moderation takedowns.
+		{Method: http.MethodGet, Path: "/api/v1/admin/moderation/takedowns", Scope: "admin:moderation:read", Timeout: 5 * time.Second, Handler: modList},
+		{Method: http.MethodPost, Path: "/api/v1/admin/moderation/takedowns", Scope: "admin:moderation:write", Timeout: 10 * time.Second, Handler: modCreate},
+		{Method: http.MethodGet, Path: "/api/v1/admin/moderation/takedowns/{id}", Scope: "admin:moderation:read", Timeout: 5 * time.Second, Handler: modGet},
+		{Method: http.MethodDelete, Path: "/api/v1/admin/moderation/takedowns/{id}", Scope: "admin:moderation:write", Timeout: 10 * time.Second, Handler: modDelete},
+		// Backup config.
+		{Method: http.MethodGet, Path: "/api/v1/admin/backup/config", Scope: "admin:backup:read", Timeout: 5 * time.Second, Handler: cfgGet},
+		{Method: http.MethodPut, Path: "/api/v1/admin/backup/config", Scope: "admin:backup:write", Timeout: 10 * time.Second, Handler: cfgPut},
+		// Backup runs.
+		{Method: http.MethodGet, Path: "/api/v1/admin/backup/runs", Scope: "admin:backup:read", Timeout: 5 * time.Second, Handler: runsList},
+		{Method: http.MethodPost, Path: "/api/v1/admin/backup/runs", Scope: "admin:backup:write", LongRunning: true, Idempotent: true, Handler: runsTrigger},
+		{Method: http.MethodGet, Path: "/api/v1/admin/backup/runs/{id}", Scope: "admin:backup:read", Timeout: 5 * time.Second, Handler: runGet},
+		// Backup restores.
+		{Method: http.MethodGet, Path: "/api/v1/admin/backup/restores", Scope: "admin:backup:read", Timeout: 5 * time.Second, Handler: restoresList},
+		{Method: http.MethodPost, Path: "/api/v1/admin/backup/restores", Scope: "admin:backup:write", LongRunning: true, Idempotent: true, Handler: restoreTrigger},
+		// Audit log (instance-wide).
+		{Method: http.MethodGet, Path: "/api/v1/admin/audit", Scope: "admin:audit:read", Timeout: 5 * time.Second, Handler: auditList},
+		// Deletion requests.
+		{Method: http.MethodGet, Path: "/api/v1/admin/deletion-requests", Scope: "admin:users:read", Timeout: 5 * time.Second, Handler: deletionsList},
+		{Method: http.MethodPost, Path: "/api/v1/admin/deletion-requests/{id}/approve", Scope: "admin:users:write", Timeout: 10 * time.Second, Handler: deletionsApprove},
+		{Method: http.MethodPost, Path: "/api/v1/admin/deletion-requests/{id}/reject", Scope: "admin:users:write", Timeout: 10 * time.Second, Handler: deletionsReject},
+		// System.
+		{Method: http.MethodGet, Path: "/api/v1/admin/system/info", Scope: "admin:system:read", Timeout: 5 * time.Second, Handler: systemInfo},
 	}
 }
 

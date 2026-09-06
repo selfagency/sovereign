@@ -836,6 +836,711 @@ paths:
           $ref: "#/components/responses/Problem"
         "401":
           $ref: "#/components/responses/Problem"
+  /admin/tenants:
+    get:
+      operationId: adminListTenants
+      summary: List all tenants (instance admin, scope admin:tenants:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged tenants
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Tenant"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminCreateTenant
+      summary: Create a tenant (instance admin, scope admin:tenants:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/tenants/{id}:
+    get:
+      operationId: adminGetTenant
+      summary: Get a tenant by ID (instance admin, scope admin:tenants:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tenant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: adminDeleteTenant
+      summary: Delete a tenant (instance admin, scope admin:tenants:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Tenant deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/clients:
+    get:
+      operationId: adminListClients
+      summary: List OIDC clients (instance admin, scope admin:clients:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: OIDC clients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Client"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminCreateClient
+      summary: Create an OIDC client (instance admin, scope admin:clients:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClientRequest"
+      responses:
+        "201":
+          description: Client created (secret show-once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientWithSecret"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /admin/clients/{id}:
+    get:
+      operationId: adminGetClient
+      summary: Get an OIDC client by ID (instance admin, scope admin:clients:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: adminDeleteClient
+      summary: Delete an OIDC client (instance admin, scope admin:clients:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Client deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/clients/{id}/secret/rotate:
+    post:
+      operationId: adminRotateClientSecret
+      summary: Rotate an OIDC client secret (show-once, scope admin:clients:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Rotated secret (show-once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientSecret"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/moderation/takedowns:
+    get:
+      operationId: adminListTakedowns
+      summary: List moderation takedowns (instance admin, scope admin:moderation:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged takedowns
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Takedown"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminCreateTakedown
+      summary: Create a moderation takedown (instance admin, scope admin:moderation:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTakedownRequest"
+      responses:
+        "201":
+          description: Takedown created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Takedown"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/moderation/takedowns/{id}:
+    get:
+      operationId: adminGetTakedown
+      summary: Get a takedown by ID (instance admin, scope admin:moderation:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Takedown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Takedown"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: adminDeleteTakedown
+      summary: Delete (lift) a takedown (instance admin, scope admin:moderation:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Takedown lifted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/backup/config:
+    get:
+      operationId: adminGetBackupConfig
+      summary: Get backup config (instance admin, scope admin:backup:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Backup config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupConfig"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: adminPutBackupConfig
+      summary: Update backup config (instance admin, scope admin:backup:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupConfig"
+      responses:
+        "200":
+          description: Updated backup config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupConfig"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /admin/backup/runs:
+    get:
+      operationId: adminListBackupRuns
+      summary: List backup runs (instance admin, scope admin:backup:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged backup runs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BackupRun"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminTriggerBackupRun
+      summary: Trigger a backup run (instance admin, scope admin:backup:write, long-running, idempotent)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Backup run created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupRun"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/backup/runs/{id}:
+    get:
+      operationId: adminGetBackupRun
+      summary: Get a backup run by ID (instance admin, scope admin:backup:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Backup run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupRun"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/backup/restores:
+    get:
+      operationId: adminListBackupRestores
+      summary: List backup restores (instance admin, scope admin:backup:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged backup restores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/BackupRestore"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminTriggerBackupRestore
+      summary: Trigger a backup restore (instance admin, scope admin:backup:write, long-running, idempotent)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestoreRequest"
+      responses:
+        "201":
+          description: Backup restore created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupRestore"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /admin/audit:
+    get:
+      operationId: adminListAudit
+      summary: List instance audit log (instance admin, scope admin:audit:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged audit entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AuditEntry"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/deletion-requests:
+    get:
+      operationId: adminListDeletionRequests
+      summary: List pending deletion requests (instance admin, scope admin:users:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged deletion requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PendingDeletion"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/deletion-requests/{id}/approve:
+    post:
+      operationId: adminApproveDeletionRequest
+      summary: Approve and cascade-delete (instance admin, scope admin:users:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deletion request approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingDeletion"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/deletion-requests/{id}/reject:
+    post:
+      operationId: adminRejectDeletionRequest
+      summary: Reject a deletion request (no-op, scope admin:users:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deletion request rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingDeletion"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/system/info:
+    get:
+      operationId: adminSystemInfo
+      summary: Server config summary with secrets redacted (instance admin, scope admin:system:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Config summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemInfo"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:
@@ -1128,3 +1833,202 @@ components:
         last_seen:
           type: string
           format: date-time
+
+    Tenant:
+      type: object
+      properties:
+        id:
+          type: string
+        handle:
+          type: string
+        did:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateTenantRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        handle:
+          type: string
+        did_method:
+          type: string
+        did:
+          type: string
+    Client:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        audience:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    ClientWithSecret:
+      type: object
+      properties:
+        client:
+          $ref: "#/components/schemas/Client"
+        secret:
+          type: string
+    CreateClientRequest:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+    ClientSecret:
+      type: object
+      properties:
+        secret:
+          type: string
+    Takedown:
+      type: object
+      properties:
+        id:
+          type: string
+        resource:
+          type: string
+        reason:
+          type: string
+        acted_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateTakedownRequest:
+      type: object
+      required: [resource, reason]
+      properties:
+        resource:
+          type: string
+        reason:
+          type: string
+    BackupConfig:
+      type: object
+      properties:
+        schedule:
+          type: string
+        destination:
+          type: string
+        prefix:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    BackupRun:
+      type: object
+      properties:
+        id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        error:
+          type: string
+          nullable: true
+        size_bytes:
+          type: integer
+        destination_key:
+          type: string
+    BackupRestore:
+      type: object
+      properties:
+        id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        error:
+          type: string
+          nullable: true
+        source_key:
+          type: string
+        requested_by:
+          type: string
+    RestoreRequest:
+      type: object
+      required: [source_key, confirm]
+      properties:
+        source_key:
+          type: string
+        confirm:
+          type: boolean
+    AuditEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        actor:
+          type: string
+        action:
+          type: string
+        resource:
+          type: string
+        detail:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    PendingDeletion:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        approved_by:
+          type: string
+          nullable: true
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
+    SystemInfo:
+      type: object
+      properties:
+        domain:
+          type: string
+        audience:
+          type: string
+        data_dir:
+          type: string
+        open_registrations:
+          type: boolean
+        storage_backend:
+          type: string
+        ipfs_enabled:
+          type: boolean
+        smtp_enabled:
+          type: boolean
+        smtp_host:
+          type: string
+        smtp_from:
+          type: string
+        api_cors_origins:
+          type: array
+          items:
+            type: string
