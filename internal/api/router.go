@@ -15,6 +15,7 @@ import (
 	"github.com/selfagency/sovereign/internal/api/problem"
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
+	"github.com/selfagency/sovereign/internal/api/v1/self"
 )
 
 // Route describes one HTTP endpoint on the /api/v1 surface.
@@ -83,7 +84,7 @@ var phase1Meta = meta.New(
 // control plane (T1.10). The route table is the single source of truth for
 // both entry points.
 func RoutesFor(h *meta.Handler) []Route {
-	return routesFor(h, nil)
+	return routesFor(h, nil, nil)
 }
 
 // RoutesForAPI returns the current route set with both the given meta handler
@@ -91,7 +92,14 @@ func RoutesFor(h *meta.Handler) []Route {
 // Pass nil for the auth handler to keep those routes as 501 stubs (the drift
 // test checks parity only).
 func RoutesForAPI(h *meta.Handler, ah *v1auth.Handler) []Route {
-	return routesFor(h, ah)
+	return routesFor(h, ah, nil)
+}
+
+// RoutesForSelf returns the current route set with the given meta, auth, and
+// self handlers wired. Pass nil for the self handler to keep the /me/* routes
+// as 501 stubs (the drift test checks parity only).
+func RoutesForSelf(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler) []Route {
+	return routesFor(h, ah, sh)
 }
 
 // Routes returns the current route set with the Phase-1 default meta handler
@@ -103,7 +111,7 @@ func Routes() []Route {
 
 // routesFor is the shared route-table constructor. When ah is nil, the auth
 // routes are 501 stubs; otherwise they delegate to the auth handler.
-func routesFor(h *meta.Handler, ah *v1auth.Handler) []Route {
+func routesFor(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler) []Route {
 	return append([]Route{
 		// Meta / health / ready (anonymous).
 		{Method: http.MethodGet, Path: "/api/v1/meta/capabilities", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Capabilities},
@@ -111,7 +119,7 @@ func routesFor(h *meta.Handler, ah *v1auth.Handler) []Route {
 		{Method: http.MethodGet, Path: "/api/v1/health", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Health},
 		{Method: http.MethodGet, Path: "/api/v1/ready", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Ready},
 		{Method: http.MethodGet, Path: "/api/v1/openapi.json", Anonymous: true, Timeout: 5 * time.Second, Handler: h.OpenAPI},
-	}, authRoutes(ah)...)
+	}, append(authRoutes(ah), selfRoutes(sh)...)...)
 }
 
 // authRoutes builds the auth/session/webauthn route set. When ah is nil the
@@ -138,6 +146,63 @@ func authRoutes(ah *v1auth.Handler) []Route {
 		// Anonymous browser entry point (M1): redeem a magic link into a session
 		// cookie and redirect to /panel. Token-in-URL leaks are acknowledged.
 		{Method: http.MethodGet, Path: "/invite/{token}", Anonymous: true, Timeout: 10 * time.Second, Handler: inviteGet},
+	}
+}
+
+// selfRoutes builds the /me/* self-service route set. When sh is nil the
+// handlers are 501 stubs; otherwise they delegate to the self handler. GET
+// routes get a 5s timeout; mutations get 10s. None are anonymous.
+func selfRoutes(sh *self.Handler) []Route {
+	// Resolve the handlers once; referencing a method value on a nil receiver
+	// panics, so only bind when sh is non-nil.
+	identityGet, identityUpdate, identityDelete, identityOnboarding, identityToS, identityExport := stub(), stub(), stub(), stub(), stub(), stub()
+	profileGet, profilePut, profileDelete, profilePublish, profileUnpublish, profileAvatar := stub(), stub(), stub(), stub(), stub(), stub()
+	linksList, linksAdd, linksUpdate, linksDelete, linksReorder := stub(), stub(), stub(), stub(), stub()
+	keysList, keysGet, keysCreate, keysDelete, keysRevoke := stub(), stub(), stub(), stub(), stub()
+	proofsList, proofsGet, proofsCreate, proofsDelete, proofsVerify := stub(), stub(), stub(), stub(), stub()
+	sessList, sessRevoke, sessRevokeAll := stub(), stub(), stub()
+	if sh != nil {
+		identityGet, identityUpdate, identityDelete = sh.Identity.Get, sh.Identity.Update, sh.Identity.RequestDeletion
+		identityOnboarding, identityToS, identityExport = sh.Identity.OnboardingState, sh.Identity.AcceptToS, sh.Identity.Export
+		profileGet, profilePut, profileDelete = sh.Profile.Get, sh.Profile.Put, sh.Profile.Delete
+		profilePublish, profileUnpublish = sh.Profile.Publish, sh.Profile.Unpublish
+		profileAvatar = sh.Profile.UploadAvatar
+		linksList, linksAdd, linksUpdate, linksDelete, linksReorder = sh.Profile.ListLinks, sh.Profile.AddLink, sh.Profile.UpdateLink, sh.Profile.DeleteLink, sh.Profile.ReorderLinks
+		keysList, keysGet, keysCreate, keysDelete, keysRevoke = sh.Keys.List, sh.Keys.Get, sh.Keys.Create, sh.Keys.Delete, sh.Keys.Revoke
+		proofsList, proofsGet, proofsCreate, proofsDelete, proofsVerify = sh.Proofs.List, sh.Proofs.Get, sh.Proofs.Create, sh.Proofs.Delete, sh.Proofs.Verify
+		sessList, sessRevoke, sessRevokeAll = sh.Sessions.List, sh.Sessions.Revoke, sh.Sessions.RevokeAll
+	}
+	return []Route{
+		{Method: http.MethodGet, Path: "/api/v1/me", Scope: "self:read", Timeout: 5 * time.Second, Handler: identityGet},
+		{Method: http.MethodPatch, Path: "/api/v1/me", Scope: "self:write", Timeout: 10 * time.Second, Handler: identityUpdate},
+		{Method: http.MethodDelete, Path: "/api/v1/me", Scope: "account:delete", Timeout: 10 * time.Second, Handler: identityDelete},
+		{Method: http.MethodGet, Path: "/api/v1/me/onboarding", Scope: "self:read", Timeout: 5 * time.Second, Handler: identityOnboarding},
+		{Method: http.MethodPost, Path: "/api/v1/me/tos", Scope: "self:write", Timeout: 10 * time.Second, Handler: identityToS},
+		{Method: http.MethodGet, Path: "/api/v1/me/export", Scope: "export:read", Timeout: 5 * time.Second, Handler: identityExport},
+		{Method: http.MethodGet, Path: "/api/v1/me/profile", Scope: "profile:read", Timeout: 5 * time.Second, Handler: profileGet},
+		{Method: http.MethodPut, Path: "/api/v1/me/profile", Scope: "profile:write", Timeout: 10 * time.Second, Handler: profilePut},
+		{Method: http.MethodDelete, Path: "/api/v1/me/profile", Scope: "profile:write", Timeout: 10 * time.Second, Handler: profileDelete},
+		{Method: http.MethodPost, Path: "/api/v1/me/profile:publish", Scope: "profile:publish", Timeout: 10 * time.Second, Handler: profilePublish},
+		{Method: http.MethodPost, Path: "/api/v1/me/profile:unpublish", Scope: "profile:publish", Timeout: 10 * time.Second, Handler: profileUnpublish},
+		{Method: http.MethodPut, Path: "/api/v1/me/profile/avatar", Scope: "profile:write", Timeout: 10 * time.Second, Handler: profileAvatar},
+		{Method: http.MethodGet, Path: "/api/v1/me/profile/links", Scope: "profile:read", Timeout: 5 * time.Second, Handler: linksList},
+		{Method: http.MethodPost, Path: "/api/v1/me/profile/links", Scope: "profile:write", Timeout: 10 * time.Second, Handler: linksAdd},
+		{Method: http.MethodPatch, Path: "/api/v1/me/profile/links/{id}", Scope: "profile:write", Timeout: 10 * time.Second, Handler: linksUpdate},
+		{Method: http.MethodDelete, Path: "/api/v1/me/profile/links/{id}", Scope: "profile:write", Timeout: 10 * time.Second, Handler: linksDelete},
+		{Method: http.MethodPost, Path: "/api/v1/me/profile/links:reorder", Scope: "profile:write", Timeout: 10 * time.Second, Handler: linksReorder},
+		{Method: http.MethodGet, Path: "/api/v1/me/keys", Scope: "keys:read", Timeout: 5 * time.Second, Handler: keysList},
+		{Method: http.MethodPost, Path: "/api/v1/me/keys", Scope: "keys:write", Timeout: 10 * time.Second, Handler: keysCreate},
+		{Method: http.MethodGet, Path: "/api/v1/me/keys/{id}", Scope: "keys:read", Timeout: 5 * time.Second, Handler: keysGet},
+		{Method: http.MethodDelete, Path: "/api/v1/me/keys/{id}", Scope: "keys:write", Timeout: 10 * time.Second, Handler: keysDelete},
+		{Method: http.MethodPost, Path: "/api/v1/me/keys/{id}/revoke", Scope: "keys:write", Timeout: 10 * time.Second, Handler: keysRevoke},
+		{Method: http.MethodGet, Path: "/api/v1/me/proofs", Scope: "proofs:read", Timeout: 5 * time.Second, Handler: proofsList},
+		{Method: http.MethodPost, Path: "/api/v1/me/proofs", Scope: "proofs:write", Timeout: 10 * time.Second, Handler: proofsCreate},
+		{Method: http.MethodGet, Path: "/api/v1/me/proofs/{id}", Scope: "proofs:read", Timeout: 5 * time.Second, Handler: proofsGet},
+		{Method: http.MethodDelete, Path: "/api/v1/me/proofs/{id}", Scope: "proofs:write", Timeout: 10 * time.Second, Handler: proofsDelete},
+		{Method: http.MethodPost, Path: "/api/v1/me/proofs/{id}/verify", Scope: "proofs:verify", Timeout: 10 * time.Second, Handler: proofsVerify},
+		{Method: http.MethodGet, Path: "/api/v1/me/sessions", Scope: "sessions:read", Timeout: 5 * time.Second, Handler: sessList},
+		{Method: http.MethodDelete, Path: "/api/v1/me/sessions/{id}", Scope: "sessions:revoke", Timeout: 10 * time.Second, Handler: sessRevoke},
+		{Method: http.MethodDelete, Path: "/api/v1/me/sessions", Scope: "sessions:revoke", Timeout: 10 * time.Second, Handler: sessRevokeAll},
 	}
 }
 

@@ -239,6 +239,603 @@ paths:
           $ref: "#/components/responses/Problem"
         "409":
           $ref: "#/components/responses/Problem"
+  /me:
+    get:
+      operationId: getSelf
+      summary: Current principal identity
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Current identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Problem"
+    patch:
+      operationId: updateSelf
+      summary: Update current principal identity
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSelfRequest"
+      responses:
+        "200":
+          description: Updated identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: requestDeletion
+      summary: Request account deletion (admin approval follows)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "202":
+          description: Deletion requested and pending admin approval
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/onboarding:
+    get:
+      operationId: getOnboardingState
+      summary: Current onboarding state
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Onboarding state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingState"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/tos:
+    post:
+      operationId: acceptToS
+      summary: Accept the Terms of Service
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: ToS acceptance recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingState"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/export:
+    get:
+      operationId: exportSelf
+      summary: Export the current principal's data
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Full user data set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportData"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile:
+    get:
+      operationId: getSelfProfile
+      summary: Get the current principal's profile page
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Profile page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePage"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: upsertSelfProfile
+      summary: Create or fully replace the profile page
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpsertRequest"
+      responses:
+        "200":
+          description: Upserted profile page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePage"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteSelfProfile
+      summary: Delete the profile page (cascades to its links)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "204":
+          description: Profile deleted
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile:publish:
+    post:
+      operationId: publishSelfProfile
+      summary: Publish the profile page
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Published profile page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePage"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile:unpublish:
+    post:
+      operationId: unpublishSelfProfile
+      summary: Unpublish the profile page
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Unpublished profile page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePage"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile/avatar:
+    put:
+      operationId: uploadSelfAvatar
+      summary: Upload the profile avatar image
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Avatar URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvatarResponse"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile/links:
+    get:
+      operationId: listSelfProfileLinks
+      summary: List profile links in display order
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Ordered profile links
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProfileLink"
+        "401":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: addSelfProfileLink
+      summary: Add a profile link
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkWriteRequest"
+      responses:
+        "201":
+          description: Created profile link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileLink"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile/links/{id}:
+    patch:
+      operationId: updateSelfProfileLink
+      summary: Update a profile link
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkWriteRequest"
+      responses:
+        "200":
+          description: Updated profile link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileLink"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteSelfProfileLink
+      summary: Delete a profile link
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Profile link deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile/links:reorder:
+    post:
+      operationId: reorderSelfProfileLinks
+      summary: Reorder profile links
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkReorderRequest"
+      responses:
+        "200":
+          description: Reordered profile links
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProfileLink"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/keys:
+    get:
+      operationId: listSelfKeys
+      summary: List the current principal's public keys
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Public keys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PublicKey"
+        "401":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createSelfKey
+      summary: Register a public key
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicKeyCreateRequest"
+      responses:
+        "201":
+          description: Created public key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicKey"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/keys/{id}:
+    get:
+      operationId: getSelfKey
+      summary: Get a single public key
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Public key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicKey"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteSelfKey
+      summary: Delete a public key
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Public key deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/keys/{id}/revoke:
+    post:
+      operationId: revokeSelfKey
+      summary: Revoke a public key
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Revoked public key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicKey"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/proofs:
+    get:
+      operationId: listSelfProofs
+      summary: List the current principal's proof claims
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Proof claims
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ProofClaim"
+        "401":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createSelfProof
+      summary: Create a proof claim
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProofCreateRequest"
+      responses:
+        "201":
+          description: Created proof claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProofClaim"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/proofs/{id}:
+    get:
+      operationId: getSelfProof
+      summary: Get a single proof claim
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Proof claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProofClaim"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteSelfProof
+      summary: Delete a proof claim
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Proof claim deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/proofs/{id}/verify:
+    post:
+      operationId: verifySelfProof
+      summary: Verify a proof claim
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Verified proof claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProofClaim"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/sessions:
+    get:
+      operationId: listSelfSessions
+      summary: List the current principal's sessions
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SessionInfo"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: revokeAllSelfSessions
+      summary: Revoke all of the current principal's sessions
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "204":
+          description: All sessions revoked
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/sessions/{id}:
+    delete:
+      operationId: revokeSelfSession
+      summary: Revoke one session
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Session revoked
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:
@@ -352,3 +949,182 @@ components:
     WebAuthnResult:
       type: object
       additionalProperties: true
+    UpdateSelfRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          maxLength: 100
+    OnboardingState:
+      type: object
+      required: [tos_accepted, has_passkey, has_profile, complete]
+      properties:
+        tos_accepted:
+          type: boolean
+        has_passkey:
+          type: boolean
+        has_profile:
+          type: boolean
+        complete:
+          type: boolean
+    ExportData:
+      type: object
+      required: [user, links, keys, proofs]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        profile:
+          $ref: "#/components/schemas/ProfilePage"
+        links:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProfileLink"
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/PublicKey"
+        proofs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProofClaim"
+    ProfilePage:
+      type: object
+      properties:
+        id:
+          type: string
+        display_name:
+          type: string
+        bio:
+          type: string
+        is_published:
+          type: boolean
+        avatar_url:
+          type: string
+          format: uri
+        theme:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ProfileUpsertRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 100
+        bio:
+          type: string
+        is_published:
+          type: boolean
+    ProfileLink:
+      type: object
+      required: [id, label, url]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        url:
+          type: string
+          format: uri
+        position:
+          type: integer
+    LinkWriteRequest:
+      type: object
+      required: [label, url]
+      properties:
+        label:
+          type: string
+        url:
+          type: string
+          format: uri
+    LinkReorderRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          items:
+            type: string
+    PublicKey:
+      type: object
+      required: [id, key]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        key:
+          type: string
+        comment:
+          type: string
+        fingerprint:
+          type: string
+        revoked:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    PublicKeyCreateRequest:
+      type: object
+      required: [key]
+      properties:
+        key:
+          type: string
+        comment:
+          type: string
+    ProofClaim:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+        status:
+          type: string
+        verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ProofCreateRequest:
+      type: object
+      required: [type, value]
+      properties:
+        type:
+          type: string
+        value:
+          type: string
+    AvatarResponse:
+      type: object
+      required: [avatar_url]
+      properties:
+        avatar_url:
+          type: string
+          format: uri
+    SessionInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
