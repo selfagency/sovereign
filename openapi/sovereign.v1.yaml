@@ -311,6 +311,7 @@ components:
           type: string
         scopes:
           type: array
+          maxItems: 64
           items:
             type: string
         onboarding:

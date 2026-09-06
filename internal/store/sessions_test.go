@@ -350,3 +350,42 @@ func TestGenerateSessionTokenShape(t *testing.T) {
 		t.Fatal("generated token not recognized as session token")
 	}
 }
+
+// TestPruneUserSessionsZeroLimit verifies a limit < 1 is a no-op returning 0.
+func TestPruneUserSessionsZeroLimit(t *testing.T) {
+	s := newSessionTestStore(t)
+	ctx := context.Background()
+	mustSession(t, s, "user-1", mustToken(t))
+	n, err := s.PruneUserSessions(ctx, "user-1", 0)
+	if err != nil {
+		t.Fatalf("PruneUserSessions limit 0: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("pruned = %d, want 0", n)
+	}
+}
+
+// TestSessionsCanceledCtx drives each session method's SQL error branch via a
+// canceled context. These fmt.Errorf wraps are otherwise unreachable with a
+// healthy store.
+func TestSessionsCanceledCtx(t *testing.T) {
+	s := newSessionTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := s.TouchSession(ctx, "s1", time.Now()); err == nil {
+		t.Fatal("TouchSession: want error from canceled ctx")
+	}
+	if err := s.RevokeSession(ctx, "s1"); err == nil {
+		t.Fatal("RevokeSession: want error from canceled ctx")
+	}
+	if err := s.RevokeUserSessions(ctx, "u1"); err == nil {
+		t.Fatal("RevokeUserSessions: want error from canceled ctx")
+	}
+	if _, err := s.ListUserSessions(ctx, "u1"); err == nil {
+		t.Fatal("ListUserSessions: want error from canceled ctx")
+	}
+	if _, err := s.PruneUserSessions(ctx, "u1", 3); err == nil {
+		t.Fatal("PruneUserSessions: want error from canceled ctx")
+	}
+}

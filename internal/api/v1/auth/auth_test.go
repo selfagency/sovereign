@@ -146,7 +146,7 @@ func (ta *testAPI) cookieReq(method, path, sessionToken string) *http.Request {
 	if method != http.MethodGet {
 		// Cookie-authenticated unsafe requests require the double-submit CSRF token.
 		tok := "csrf-token"
-		r.AddCookie(&http.Cookie{Name: "__Host-csrf", Value: tok, Path: "/", Secure: true})
+		r.AddCookie(csrfCookieFixture(tok))
 		r.Header.Set("X-CSRF-Token", tok)
 	}
 	return r
@@ -1128,6 +1128,22 @@ func sessionCookieFixture(value string) *http.Cookie {
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,
+		SameSite: http.SameSiteLaxMode,
+	}
+}
+
+// csrfCookieFixture builds a double-submit CSRF cookie fixture. HttpOnly is
+// false by design (the thin client must read it to send X-CSRF-Token);
+// Secure+Path satisfy the __Host- prefix. Suppressed for semgrep's
+// cookie-http-only rule.
+func csrfCookieFixture(value string) *http.Cookie {
+	// nosemgrep: go.lang.security.audit.net.cookie-http-only.cookie-http-only -- double-submit CSRF token cookie, not a session cookie
+	return &http.Cookie{
+		Name:     "__Host-csrf",
+		Value:    value,
+		Path:     "/",
+		Secure:   true,
+		HttpOnly: false,
 		SameSite: http.SameSiteLaxMode,
 	}
 }

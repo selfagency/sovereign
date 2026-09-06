@@ -334,3 +334,81 @@ func TestDeleteUserCascade(t *testing.T) {
 		t.Fatalf("missing = %v, want ErrNotFound", err)
 	}
 }
+
+// TestListTenantsPageEmpty verifies an empty tenants table returns 0/0 and
+// exercises the default-limit branch (limit <= 0 -> 100).
+func TestListTenantsPageEmpty(t *testing.T) {
+	s := newAdminTestStore(t)
+	ctx := context.Background()
+	page, total, err := s.ListTenantsPage(ctx, 0, 0)
+	if err != nil {
+		t.Fatalf("ListTenantsPage empty: %v", err)
+	}
+	if len(page) != 0 || total != 0 {
+		t.Fatalf("empty = %d/%d, want 0/0", len(page), total)
+	}
+}
+
+// TestListUsersPageDefaultLimit exercises the limit <= 0 default branch.
+func TestListUsersPageDefaultLimit(t *testing.T) {
+	s := newAdminTestStore(t)
+	ctx := context.Background()
+	seedTenant(t, s, ctx, "t1", "t1", "did:web:t1")
+	seedUser(t, s, ctx, "u1", "t1", "alice")
+	page, total, err := s.ListUsersPage(ctx, "t1", 0, 0)
+	if err != nil {
+		t.Fatalf("ListUsersPage default limit: %v", err)
+	}
+	if total != 1 || len(page) != 1 {
+		t.Fatalf("got %d/%d, want 1/1", len(page), total)
+	}
+}
+
+// TestListAuditPageDefaultLimit exercises the limit <= 0 default branch.
+func TestListAuditPageDefaultLimit(t *testing.T) {
+	s := newAdminTestStore(t)
+	ctx := context.Background()
+	seedTenant(t, s, ctx, "t1", "t1", "did:web:t1")
+	must(t, s.AppendAudit(ctx, &AuditEntry{ID: "a1", TenantID: "t1", Actor: "u1", Action: "act", CreatedAt: time.Now()}))
+	page, total, err := s.ListAuditPage(ctx, "t1", 0, 0)
+	if err != nil {
+		t.Fatalf("ListAuditPage default limit: %v", err)
+	}
+	if total != 1 || len(page) != 1 {
+		t.Fatalf("got %d/%d, want 1/1", len(page), total)
+	}
+}
+
+// TestAdminMethodsCanceledCtx drives each admin method's SQL error branch via a
+// canceled context. These branches (fmt.Errorf wraps) are otherwise unreachable
+// with a healthy store, so a canceled context is the only way to exercise them.
+func TestAdminMethodsCanceledCtx(t *testing.T) {
+	s := newAdminTestStore(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if err := s.SetUserDisplayName(ctx, "u1", "x"); err == nil {
+		t.Fatal("SetUserDisplayName: want error from canceled ctx")
+	}
+	if err := s.UpdateProfileLink(ctx, "pp1", "l1", &ProfileLink{}); err == nil {
+		t.Fatal("UpdateProfileLink: want error from canceled ctx")
+	}
+	if err := s.DeleteWebAuthnCredential(ctx, "u1", []byte("c")); err == nil {
+		t.Fatal("DeleteWebAuthnCredential: want error from canceled ctx")
+	}
+	if _, _, err := s.ListUsersPage(ctx, "t1", 10, 0); err == nil {
+		t.Fatal("ListUsersPage: want error from canceled ctx")
+	}
+	if _, _, err := s.ListAuditPage(ctx, "t1", 10, 0); err == nil {
+		t.Fatal("ListAuditPage: want error from canceled ctx")
+	}
+	if _, _, err := s.ListTenantsPage(ctx, 10, 0); err == nil {
+		t.Fatal("ListTenantsPage: want error from canceled ctx")
+	}
+	if _, err := s.CountUsers(ctx, "t1"); err == nil {
+		t.Fatal("CountUsers: want error from canceled ctx")
+	}
+	if err := s.DeleteUser(ctx, "u1"); err == nil {
+		t.Fatal("DeleteUser: want error from canceled ctx")
+	}
+}

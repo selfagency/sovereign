@@ -109,6 +109,7 @@ func isFormEncoded(r *http.Request) bool {
 // Path=/ satisfy the __Host- prefix. This is a CSRF token cookie, not a
 // session cookie, so gosec G409 is a false positive.
 func SetToken(w http.ResponseWriter, token string) {
+	// nosemgrep: go.lang.security.audit.net.cookie-http-only.cookie-http-only -- double-submit CSRF token cookie, not a session cookie; JS must read it to send X-CSRF-Token
 	http.SetCookie(w, &http.Cookie{
 		Name:     csrfCookieName,
 		Value:    token,
