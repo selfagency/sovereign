@@ -249,6 +249,9 @@ func adminRoutes(adm *admin.Handler) []Route {
 	auditList := stub()
 	deletionsList, deletionsApprove, deletionsReject := stub(), stub(), stub()
 	systemInfo := stub()
+	usersList, usersCreate, usersGet, usersUpdate, usersDelete, usersInvite, usersCredentials, usersRevoke := stub(), stub(), stub(), stub(), stub(), stub(), stub(), stub()
+	ipfsList, ipfsAdd, ipfsGet := stub(), stub(), stub()
+	tosGet, tosPut := stub(), stub()
 	if adm != nil {
 		tenantsList, tenantsGet, tenantsCreate, tenantsDelete = adm.Tenants.List, adm.Tenants.GetByID, adm.Tenants.Create, adm.Tenants.Delete
 		clientsList, clientsGet, clientsCreate, clientsDelete, clientsRotate = adm.Clients.ListClients, adm.Clients.ClientByID, adm.Clients.CreateClient, adm.Clients.DeleteClient, adm.Clients.RotateSecret
@@ -258,6 +261,10 @@ func adminRoutes(adm *admin.Handler) []Route {
 		auditList = adm.Audit.List
 		deletionsList, deletionsApprove, deletionsReject = adm.Deletions.List, adm.Deletions.Approve, adm.Deletions.Reject
 		systemInfo = adm.System.Info
+		usersList, usersCreate, usersGet, usersUpdate, usersDelete = adm.Users.List, adm.Users.Create, adm.Users.GetByID, adm.Users.Update, adm.Users.Delete
+		usersInvite, usersCredentials, usersRevoke = adm.Users.CreateInvite, adm.Users.ListCredentials, adm.Users.RevokeSessions
+		ipfsList, ipfsAdd, ipfsGet = adm.IPFS.List, adm.IPFS.Add, adm.IPFS.GetByCID
+		tosGet, tosPut = adm.ToS.Get, adm.ToS.Put
 	}
 	return []Route{
 		// Tenants.
@@ -292,6 +299,23 @@ func adminRoutes(adm *admin.Handler) []Route {
 		{Method: http.MethodGet, Path: "/api/v1/admin/deletion-requests", Scope: "admin:users:read", Timeout: 5 * time.Second, Handler: deletionsList},
 		{Method: http.MethodPost, Path: "/api/v1/admin/deletion-requests/{id}/approve", Scope: "admin:users:write", Timeout: 10 * time.Second, Handler: deletionsApprove},
 		{Method: http.MethodPost, Path: "/api/v1/admin/deletion-requests/{id}/reject", Scope: "admin:users:write", Timeout: 10 * time.Second, Handler: deletionsReject},
+		// Users (instance-wide). Create and invite are idempotent so a replayed
+		// request does not create a duplicate user or send a second email.
+		{Method: http.MethodGet, Path: "/api/v1/admin/users", Scope: "admin:users:read", Timeout: 5 * time.Second, Handler: usersList},
+		{Method: http.MethodPost, Path: "/api/v1/admin/users", Scope: "admin:users:write", Idempotent: true, Timeout: 10 * time.Second, Handler: usersCreate},
+		{Method: http.MethodGet, Path: "/api/v1/admin/users/{id}", Scope: "admin:users:read", Timeout: 5 * time.Second, Handler: usersGet},
+		{Method: http.MethodPatch, Path: "/api/v1/admin/users/{id}", Scope: "admin:users:write", Timeout: 10 * time.Second, Handler: usersUpdate},
+		{Method: http.MethodDelete, Path: "/api/v1/admin/users/{id}", Scope: "admin:users:write", Timeout: 10 * time.Second, Handler: usersDelete},
+		{Method: http.MethodPost, Path: "/api/v1/admin/users/{id}/invites", Scope: "admin:users:write", Idempotent: true, Timeout: 10 * time.Second, Handler: usersInvite},
+		{Method: http.MethodGet, Path: "/api/v1/admin/users/{id}/credentials", Scope: "admin:users:read", Timeout: 5 * time.Second, Handler: usersCredentials},
+		{Method: http.MethodPost, Path: "/api/v1/admin/users/{id}/sessions:revoke", Scope: "admin:users:write", Timeout: 10 * time.Second, Handler: usersRevoke},
+		// IPFS pins (NOT idempotent).
+		{Method: http.MethodGet, Path: "/api/v1/admin/ipfs/pins", Scope: "admin:ipfs:read", Timeout: 5 * time.Second, Handler: ipfsList},
+		{Method: http.MethodPost, Path: "/api/v1/admin/ipfs/pins", Scope: "admin:ipfs:write", Timeout: 10 * time.Second, Handler: ipfsAdd},
+		{Method: http.MethodGet, Path: "/api/v1/admin/ipfs/pins/{cid}", Scope: "admin:ipfs:read", Timeout: 5 * time.Second, Handler: ipfsGet},
+		// Terms of Service.
+		{Method: http.MethodGet, Path: "/api/v1/admin/tos", Scope: "admin:system:read", Timeout: 5 * time.Second, Handler: tosGet},
+		{Method: http.MethodPut, Path: "/api/v1/admin/tos", Scope: "admin:system:write", Timeout: 10 * time.Second, Handler: tosPut},
 		// System.
 		{Method: http.MethodGet, Path: "/api/v1/admin/system/info", Scope: "admin:system:read", Timeout: 5 * time.Second, Handler: systemInfo},
 	}

@@ -43,3 +43,25 @@ func TestGetIPFSPinMissing(t *testing.T) {
 		t.Fatalf("missing = %v, want ErrNotFound", err)
 	}
 }
+
+// TestListIPFSPins verifies listing returns all pins oldest first.
+func TestListIPFSPins(t *testing.T) {
+	s := newTestStore(t)
+	ctx := context.Background()
+	for _, cid := range []string{"cid-a", "cid-b", "cid-c"} {
+		if err := s.AddIPFSPin(ctx, cid, "pinned"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	pins, err := s.ListIPFSPins(ctx)
+	if err != nil {
+		t.Fatalf("ListIPFSPins: %v", err)
+	}
+	if len(pins) != 3 {
+		t.Fatalf("ListIPFSPins len = %d, want 3", len(pins))
+	}
+	// Ordered by created_at ascending: a, b, c.
+	if pins[0].CID != "cid-a" || pins[1].CID != "cid-b" || pins[2].CID != "cid-c" {
+		t.Fatalf("ListIPFSPins order = %+v", pins)
+	}
+}

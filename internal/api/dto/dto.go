@@ -15,6 +15,7 @@ import "time"
 type User struct {
 	ID          string    `json:"id"`
 	TenantID    string    `json:"tenant_id"`
+	Handle      string    `json:"handle"`
 	Email       string    `json:"email"`
 	DisplayName string    `json:"display_name"`
 	IsAdmin     bool      `json:"is_admin"`
@@ -174,6 +175,13 @@ type ToSDocument struct {
 	Content     string    `json:"content"`
 	PublishedAt time.Time `json:"published_at"`
 	PublishedBy string    `json:"published_by"`
+}
+
+// IPFSPin is a CID pinned to the instance IPFS broker.
+type IPFSPin struct {
+	CID       string    `json:"cid"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Capability describes one wired feature: whether it is actually wired and a

@@ -37,13 +37,14 @@ func TestUserGolden(t *testing.T) {
 	golden(t, "User", User{
 		ID:          "user_1",
 		TenantID:    "tenant_1",
+		Handle:      "ada",
 		Email:       "ada@example.com",
 		DisplayName: "Ada",
 		IsAdmin:     true,
 		TOSAccepted: true,
 		CreatedAt:   mustTime(t, "2026-01-02T03:04:05Z"),
 		UpdatedAt:   mustTime(t, "2026-02-03T04:05:06Z"),
-	}, `{"id":"user_1","tenant_id":"tenant_1","email":"ada@example.com","display_name":"Ada","is_admin":true,"tos_accepted":true,"created_at":"2026-01-02T03:04:05Z","updated_at":"2026-02-03T04:05:06Z"}`)
+	}, `{"id":"user_1","tenant_id":"tenant_1","handle":"ada","email":"ada@example.com","display_name":"Ada","is_admin":true,"tos_accepted":true,"created_at":"2026-01-02T03:04:05Z","updated_at":"2026-02-03T04:05:06Z"}`)
 }
 
 func TestTenantGolden(t *testing.T) {
@@ -254,7 +255,7 @@ func TestListGolden(t *testing.T) {
 		CreatedAt: mustTime(t, "2026-01-02T03:04:05Z"),
 		UpdatedAt: mustTime(t, "2026-01-02T03:04:05Z"),
 	}}, Offset: 0, Limit: 1, Total: 1},
-		`{"data":[{"id":"user_1","tenant_id":"tenant_1","email":"ada@example.com","display_name":"","is_admin":false,"tos_accepted":false,"created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-02T03:04:05Z"}],"offset":0,"limit":1,"total":1}`)
+		`{"data":[{"id":"user_1","tenant_id":"tenant_1","handle":"","email":"ada@example.com","display_name":"","is_admin":false,"tos_accepted":false,"created_at":"2026-01-02T03:04:05Z","updated_at":"2026-01-02T03:04:05Z"}],"offset":0,"limit":1,"total":1}`)
 }
 
 func TestCursorListGolden(t *testing.T) {

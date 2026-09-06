@@ -16,7 +16,9 @@ import (
 	"github.com/selfagency/sovereign/internal/api"
 	"github.com/selfagency/sovereign/internal/api/dto"
 	"github.com/selfagency/sovereign/internal/api/middleware"
+	v1admin "github.com/selfagency/sovereign/internal/api/v1/admin"
 	"github.com/selfagency/sovereign/internal/api/v1/admin/capabilities"
+	v1system "github.com/selfagency/sovereign/internal/api/v1/admin/system"
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
 	"github.com/selfagency/sovereign/internal/api/v1/self"
@@ -42,14 +44,15 @@ import (
 
 // Server is the assembled identity server.
 type Server struct {
-	cfg       *Config
-	version   string
-	store     *store.Store
-	authStore *auth.SQLStore
-	blobs     storage.Backend
-	mailer    mail.Sender
-	mux       http.Handler
-	logger    *slog.Logger
+	cfg         *Config
+	version     string
+	store       *store.Store
+	authStore   *auth.SQLStore
+	blobs       storage.Backend
+	mailer      mail.Sender
+	ipfsBackend ipfspin.Backend
+	mux         http.Handler
+	logger      *slog.Logger
 	// apiClose stops the control-plane middleware chain's background goroutines
 	// (idempotency pruner) on Close.
 	apiClose func()
@@ -245,6 +248,7 @@ func (s *Server) buildRouter() error {
 	if s.cfg.IPFS.Enabled {
 		ipfsBackend = ipfspin.NewKuboRPC("http://127.0.0.1:5001")
 	}
+	s.ipfsBackend = ipfsBackend
 	ipfsBroker := newIPFSBroker(s.store, ipfsBackend)
 
 	// atproto PDS.
@@ -385,7 +389,23 @@ func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, erro
 	// sub-handler builds its own strict SSRF-safe default.
 	sh := self.New(s.store, s.blobs, nil, s.logger)
 
-	routes := api.ToRouteInfo(api.RoutesForSelf(h, ah, sh))
+	// Admin handler for the /admin/* instance-admin routes. The ipfsBackend
+	// and s.mailer are resolved earlier in New; pass them through so the
+	// admin users (invite email) and IPFS handlers work.
+	adm := v1admin.New(s.store, s.logger, nil, nil, s.blobs, capProvider, &v1system.Info{
+		Domain:            s.cfg.Domain,
+		Audience:          s.cfg.Audience,
+		DataDir:           s.cfg.DataDir,
+		OpenRegistrations: s.cfg.OpenRegistrations,
+		StorageBackend:    s.cfg.Storage.Backend,
+		IPFSEnabled:       s.cfg.IPFS.Enabled,
+		SMTPEnabled:       s.cfg.SMTP.Enabled(),
+		SMTPHost:          s.cfg.SMTP.Host,
+		SMTPFrom:          s.cfg.SMTP.From,
+		APICORSOrigins:    s.cfg.API.CORSOrigins,
+	}, s.mailer, "https://id."+s.cfg.Domain, s.ipfsBackend)
+
+	routes := api.ToRouteInfo(api.RoutesForAdmin(h, ah, sh, adm))
 	life := middleware.NewHandler(&middleware.ChainConfig{
 		Routes:        routes,
 		Logger:        s.logger,

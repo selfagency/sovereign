@@ -1624,6 +1624,370 @@ paths:
           $ref: "#/components/responses/Problem"
         "403":
           $ref: "#/components/responses/Problem"
+  /admin/users:
+    get:
+      operationId: adminListUsers
+      summary: List all users across tenants (instance admin, scope admin:users:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/User"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminCreateUser
+      summary: Create a user and send an invite (instance admin, scope admin:users:write, idempotent)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created and invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/users/{id}:
+    get:
+      operationId: adminGetUser
+      summary: Get a user by id (instance admin, scope admin:users:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    patch:
+      operationId: adminUpdateUser
+      summary: Update a user (admin, scope admin:users:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: adminDeleteUser
+      summary: Delete a user and all data (scope admin:users:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: User deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/users/{id}/invites:
+    post:
+      operationId: adminCreateUserInvite
+      summary: Create and send an invite for a user (scope admin:users:write, idempotent)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/users/{id}/credentials:
+    get:
+      operationId: adminListUserCredentials
+      summary: List a user's WebAuthn credentials (scope admin:users:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of passkeys
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/WebAuthnCredential"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/users/{id}/sessions:revoke:
+    post:
+      operationId: adminRevokeUserSessions
+      summary: Revoke all sessions for a user (scope admin:users:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked:
+                    type: boolean
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/ipfs/pins:
+    get:
+      operationId: adminListIPFSPins
+      summary: List pinned CIDs (instance admin, scope admin:ipfs:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of pins
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/IPFSPin"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminAddIPFSPin
+      summary: Add a pin by CID (scope admin:ipfs:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPinRequest"
+      responses:
+        "200":
+          description: Pin added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSPin"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/ipfs/pins/{cid}:
+    get:
+      operationId: adminGetIPFSPin
+      summary: Get pin status by CID (scope admin:ipfs:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: cid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Pin status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSPin"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/tos:
+    get:
+      operationId: adminGetToS
+      summary: Get the latest Terms of Service (scope admin:system:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Latest ToS document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToSDocument"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: adminPutToS
+      summary: Publish a new Terms of Service version (scope admin:system:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutToSRequest"
+      responses:
+        "201":
+          description: ToS published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToSDocument"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
   /admin/system/info:
     get:
       operationId: adminSystemInfo
@@ -2190,3 +2554,67 @@ components:
           type: array
           items:
             type: string
+    ToSDocument:
+      type: object
+      properties:
+        id:
+          type: string
+        version:
+          type: string
+        content:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+        published_by:
+          type: string
+    PutToSRequest:
+      type: object
+      required: [version, content]
+      properties:
+        version:
+          type: string
+        content:
+          type: string
+    IPFSPin:
+      type: object
+      required: [cid, status]
+      properties:
+        cid:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    AddPinRequest:
+      type: object
+      required: [cid]
+      properties:
+        cid:
+          type: string
+    CreateUserRequest:
+      type: object
+      required: [handle, email]
+      properties:
+        tenant_id:
+          type: string
+        handle:
+          type: string
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+        is_admin:
+          type: boolean
+    UpdateUserRequest:
+      type: object
+      properties:
+        is_admin:
+          type: boolean
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string

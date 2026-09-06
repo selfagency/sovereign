@@ -19,6 +19,7 @@ import (
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/backup"
+	"github.com/selfagency/sovereign/internal/mail"
 	"github.com/selfagency/sovereign/internal/storage"
 	"github.com/selfagency/sovereign/internal/store"
 )
@@ -64,7 +65,7 @@ func buildAdminChain(t *testing.T) (chain http.Handler, mint func(sub string, is
 	t.Cleanup(sched.Stop)
 
 	m := meta.New()
-	adm := admin.New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), sched, sched.BackupFn, fs, nil, &system.Info{})
+	adm := admin.New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), sched, sched.BackupFn, fs, nil, &system.Info{}, mail.NewLogSender(slog.New(slog.NewTextHandler(io.Discard, nil))), "https://id.example.test", nil)
 	routes := RoutesForAdmin(m, nil, nil, adm)
 	infos := ToRouteInfo(routes)
 

@@ -17,6 +17,7 @@ import (
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
 	apiauth "github.com/selfagency/sovereign/internal/auth"
+	"github.com/selfagency/sovereign/internal/mail"
 	"github.com/selfagency/sovereign/internal/store"
 )
 
@@ -198,7 +199,7 @@ func TestRoutesForAdminWiresAdmin(t *testing.T) {
 	m := meta.New()
 	// admin.New needs a scheduler + backup producer + backend; pass nil for the
 	// backup-only bits (GetConfig/ListRuns etc. don't use them).
-	adm := admin.New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, nil, nil, &system.Info{})
+	adm := admin.New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, nil, nil, &system.Info{}, mail.NewLogSender(slog.New(slog.NewTextHandler(io.Discard, nil))), "https://id.example.test", nil)
 
 	routes := RoutesForAdmin(m, nil, nil, adm)
 	mux := New(routes)

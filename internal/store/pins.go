@@ -38,3 +38,22 @@ func (s *Store) GetIPFSPin(ctx context.Context, cid string) (*IPFSPin, error) {
 	}
 	return &p, err
 }
+
+// ListIPFSPins returns all pinned CIDs, oldest first.
+func (s *Store) ListIPFSPins(ctx context.Context) ([]IPFSPin, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT cid, status, created_at FROM ipfs_pins ORDER BY created_at`)
+	if err != nil {
+		return nil, fmt.Errorf("store: list ipfs pins: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []IPFSPin
+	for rows.Next() {
+		var p IPFSPin
+		if err := rows.Scan(&p.CID, &p.Status, &p.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
