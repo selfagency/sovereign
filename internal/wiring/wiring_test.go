@@ -149,16 +149,50 @@ func TestACLCheckerOwnership(t *testing.T) {
 	}
 }
 
-// TestScopesContains verifies hierarchical scope matching.
+// TestScopesContains verifies exact-match scope matching and the explicit
+// implication table. Prefix matching is intentionally NOT supported.
 func TestScopesContains(t *testing.T) {
-	if !ScopesContains([]string{"rw"}, "r") {
-		t.Fatal("rw should imply r")
+	tests := []struct {
+		name   string
+		scopes []string
+		want   string
+		ok     bool
+	}{
+		{"exact match", []string{"profile:read"}, "profile:read", true},
+		{"exact match among several", []string{"self", "profile:read"}, "profile:read", true},
+		{"read-only does not imply read", []string{"profile:read-only"}, "profile:read", false},
+		{"readx does not imply read", []string{"self:readx"}, "self:read", false},
+		{"r does not imply rw", []string{"r"}, "rw", false},
+		{"empty scopes", nil, "profile:read", false},
+		{"empty want", []string{"profile:read"}, "", false},
 	}
-	if !ScopesContains([]string{"r"}, "r") {
-		t.Fatal("r should match r")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ScopesContains(tt.scopes, tt.want); got != tt.ok {
+				t.Fatalf("ScopesContains(%v, %q) = %v, want %v", tt.scopes, tt.want, got, tt.ok)
+			}
+		})
 	}
-	if ScopesContains([]string{"r"}, "rw") {
-		t.Fatal("r should not imply rw")
+}
+
+// TestScopeImplies verifies the implication table drives hierarchical matching
+// and that no prefix logic leaks in.
+func TestScopeImplies(t *testing.T) {
+	// A granted scope satisfies itself via exact match.
+	if !ScopesContains([]string{"profile:write"}, "profile:write") {
+		t.Fatal("exact match should hold")
+	}
+	// A granted scope never satisfies a longer scope via prefix.
+	if ScopesContains([]string{"profile:write"}, "profile:write:extra") {
+		t.Fatal("prefix must not imply longer scope")
+	}
+	// Every implication in the table must actually be honored.
+	for granted, implied := range scopeImplies {
+		for _, w := range implied {
+			if !ScopesContains([]string{granted}, w) {
+				t.Fatalf("scopeImplies[%q] should satisfy %q", granted, w)
+			}
+		}
 	}
 }
 

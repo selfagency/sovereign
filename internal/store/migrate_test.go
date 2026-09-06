@@ -32,6 +32,156 @@ func TestMigrationRunner(t *testing.T) {
 	}
 }
 
+// TestMigrationV7Tables verifies sessions and idempotency_keys are created with
+// the expected columns and indexes.
+func TestMigrationV7Tables(t *testing.T) {
+	s := newTestStore(t)
+
+	wantCols := map[string][]string{
+		"sessions": {
+			"id", "user_id", "token_hash", "created_at", "last_seen_at",
+			"expires_at", "revoked_at", "user_agent_hash", "ip_hash",
+		},
+		"idempotency_keys": {
+			"id", "key", "request_hash", "response_status",
+			"response_body", "created_at", "expires_at",
+		},
+	}
+	for table, cols := range wantCols {
+		if !tableExists(t, s, table) {
+			t.Fatalf("table %s not created by migrations", table)
+		}
+		assertColumns(t, s, table, cols)
+	}
+
+	// sessions: token_hash UNIQUE + index on user_id; idempotency_keys: key UNIQUE.
+	if !columnIndexed(t, s, "sessions", "token_hash", true) {
+		t.Fatal("sessions.token_hash not uniquely indexed")
+	}
+	if !columnIndexed(t, s, "sessions", "user_id", false) {
+		t.Fatal("sessions.user_id not indexed")
+	}
+	if !columnIndexed(t, s, "idempotency_keys", "key", true) {
+		t.Fatal("idempotency_keys.key not uniquely indexed")
+	}
+}
+
+// TestMigrationV8Tables verifies backup_* and takedowns tables exist.
+func TestMigrationV8Tables(t *testing.T) {
+	s := newTestStore(t)
+
+	wantCols := map[string][]string{
+		"backup_config":   {"id", "schedule", "destination", "prefix", "updated_at"},
+		"backup_runs":     {"id", "started_at", "finished_at", "status", "error", "size_bytes", "destination_key"},
+		"backup_restores": {"id", "started_at", "finished_at", "status", "error", "source_key", "requested_by"},
+		"takedowns":       {"id", "resource", "reason", "acted_by", "created_at"},
+	}
+	for table, cols := range wantCols {
+		if !tableExists(t, s, table) {
+			t.Fatalf("table %s not created by migrations", table)
+		}
+		assertColumns(t, s, table, cols)
+	}
+}
+
+// TestMigrationV9Tables verifies pending_deletions and tos_documents exist and
+// updated_at was added to the existing content tables.
+func TestMigrationV9Tables(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+
+	wantCols := map[string][]string{
+		"pending_deletions": {"id", "user_id", "requested_at", "status", "approved_by", "approved_at"},
+		"tos_documents":     {"id", "version", "content", "published_at", "published_by"},
+	}
+	for table, cols := range wantCols {
+		if !tableExists(t, s, table) {
+			t.Fatalf("table %s not created by migrations", table)
+		}
+		assertColumns(t, s, table, cols)
+	}
+
+	// pending_deletions.status defaults to 'pending'.
+	var dflt string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT dflt_value FROM pragma_table_info('pending_deletions') WHERE name = 'status'`).Scan(&dflt); err != nil {
+		t.Fatalf("read status default: %v", err)
+	}
+	if dflt != "'pending'" {
+		t.Fatalf("status default = %q, want 'pending'", dflt)
+	}
+
+	// updated_at added to existing content tables.
+	for _, table := range []string{"users", "public_keys", "proof_claims", "profile_links"} {
+		assertColumns(t, s, table, []string{"updated_at"})
+	}
+}
+
+func tableExists(t *testing.T, s *Store, name string) bool {
+	t.Helper()
+	var n int
+	if err := s.db.QueryRowContext(context.Background(),
+		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, name).Scan(&n); err != nil {
+		t.Fatalf("check table %s: %v", name, err)
+	}
+	return n > 0
+}
+
+func assertColumns(t *testing.T, s *Store, table string, cols []string) {
+	t.Helper()
+	for _, col := range cols {
+		var n int
+		if err := s.db.QueryRowContext(context.Background(),
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, col).Scan(&n); err != nil {
+			t.Fatalf("check column %s.%s: %v", table, col, err)
+		}
+		if n == 0 {
+			t.Fatalf("column %s.%s missing after migrations", table, col)
+		}
+	}
+}
+
+func columnIndexed(t *testing.T, s *Store, table, col string, wantUnique bool) bool {
+	t.Helper()
+	rows, err := s.db.QueryContext(context.Background(), `PRAGMA index_list(`+table+`)`)
+	if err != nil {
+		t.Fatalf("index_list %s: %v", table, err)
+	}
+	defer func() { _ = rows.Close() }()
+	type idx struct {
+		name string
+		uniq bool
+	}
+	var found []idx
+	for rows.Next() {
+		var seq int
+		var name string
+		var uniq int
+		var origin, partial string
+		if err := rows.Scan(&seq, &name, &uniq, &origin, &partial); err != nil {
+			t.Fatalf("scan index_list: %v", err)
+		}
+		found = append(found, idx{name: name, uniq: uniq != 0})
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("index_list rows: %v", err)
+	}
+	for _, i := range found {
+		if i.uniq != wantUnique {
+			continue
+		}
+		var n int
+		if err := s.db.QueryRowContext(context.Background(),
+			`SELECT COUNT(*) FROM pragma_index_info(?) WHERE name = ?`, i.name, col).Scan(&n); err != nil {
+			t.Fatalf("pragma_index_info %s: %v", i.name, err)
+		}
+		if n > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // TestMigrationInvalidatesPlaintextSecrets verifies migration v5 replaces
 // pre-v5 plaintext client secrets with the sentinel, making them unverifiable.
 func TestMigrationInvalidatesPlaintextSecrets(t *testing.T) {

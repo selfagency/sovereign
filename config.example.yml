@@ -42,5 +42,19 @@ log:
   level: info   # debug | info | warn | error
   format: text  # text | json
 
+# Identity/auth subsystem.
+auth:
+  session:
+    # DualRead: accept BOTH legacy JWT session cookies and new server-side
+    # session rows during the migration window. Fail-safe default: true.
+    # Flip to false and drop old JWT cookies after the transition release.
+    dual_read: true
+
+# Control-plane REST API (/api/v1).
+api:
+  # CORS allowlist for cross-origin browser access. Deny-by-default (empty).
+  # Never use '*' alongside credentials. Empty disables cross-origin.
+  cors_origins: []
+
 # Allow anyone to self-register an account. Defaults to false (invite-only).
 # open_registrations: false

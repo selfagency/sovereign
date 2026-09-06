@@ -1,0 +1,240 @@
+{
+  "plan_id": "20260828-rest-api",
+  "objective": "Build a versioned JSON REST API (/api/v1) covering every admin and end-user control-plane capability, then reduce the server-rendered panel and admin pages to thin static clients that talk only to that API. Governs and supersedes the admin/panel work in the Steps 5-8 hardening.",
+  "complexity": "HIGH",
+  "branch": "main @ 8183953 (Steps 1-4 merged)",
+  "tech_stack": "Go 1.27, CGO_ENABLED=0, modernc.org/sqlite, net/http ServeMux (Go 1.22+ patterns), no router dep, no JS build toolchain, go:embed assets.",
+  "module": "github.com/selfagency/sovereign",
+
+  "goals": [
+    "One authoritative HTTP surface (/api/v1) for every control-plane operation available to end users and admins.",
+    "Zero business logic in HTTP handlers — thin handlers call store directly (no internal/core layer); thin orchestration ONLY where cross-store (backup config -> scheduler, proofs verify wiring, capabilities derivation).",
+    "Machine-checkable contract: hand-written OpenAPI 3.1 spec + bidirectional CI drift test (kin-openapi, test-only dep).",
+    "Thin clients: embedded static HTML/CSS/ES-module bundles, no framework, no CDN.",
+    "Typed DTOs throughout — no map[string]any in any response."
+  ],
+
+  "non_goals": [
+    "Changing data-plane protocol surfaces (/rs/, /solid/, /xrpc/, /.well-known/*, /profile/) — spec-defined, stay as-is.",
+    "Replacing OIDC provider routes (zitadel/oidc at / on identity host).",
+    "A JS build toolchain (no bundler, no npm in default task chain).",
+    "Public-facing tenant page redesign."
+  ],
+
+  "architectural_decisions": {
+    "D-1": "Control plane lives ONLY on the identity host (id.<domain>/api/v1). Tenant derived from authenticated principal, never Host or body field. [USER-APPROVED]",
+    "D-2": "Routing via stdlib net/http.ServeMux Go 1.22+ patterns. No router dependency.",
+    "D-3": "Errors as RFC 9457 Problem Details (application/problem+json).",
+    "D-4": "REVISED: handlers call store directly; no internal/core/* layer. Thin orchestration layer ONLY where cross-store orchestration exists (backup config -> scheduler, proofs verify wiring, capabilities derivation). Store is net/http-free.",
+    "D-5": "Hand-written OpenAPI spec is source of truth; test asserts route-set <-> spec parity both directions. [USER-APPROVED]",
+    "D-6": "Browser auth = HttpOnly session cookie + double-submit CSRF token + Origin/Sec-Fetch-Site. Programmatic auth = Authorization: Bearer only. Mutually exclusive per request.",
+    "D-7": "Keep no-JS fallback for ToS accept and profile edit via form-POST adapters (303-redirect). WebAuthn stays JS-only. [USER-APPROVED]",
+    "D-8": "Each data plane gets its own audience: sovereign-api, sovereign-rs, sovereign-solid, sovereign-atproto.",
+    "D-9": "Self-host simple.css via go:embed; strict CSP with no external origins."
+  },
+
+  "constraints": [
+    "TDD mandatory (RED-GREEN-REFACTOR).",
+    "All gates pass before commit: task lint, test -race, vet, vulncheck, coverage >=80% total AND per-package.",
+    "No CGO_ENABLED=1 dependency ever.",
+    "Fail closed, defense in depth.",
+    "Tenant-scoping: never trust client-supplied tenant/account ID without checking authenticated principal.",
+    "No new runtime deps except test-only kin-openapi; justify any addition (GPL-compat, CGO-free).",
+    "PII redaction: never log key material, tokens, full proof payloads at info level. GET /invite/{token} token-in-URL leaks via Referer/access logs are acknowledged under this discipline.",
+    "No html/template outside web/ and internal/protocols/hyperlink at end of Phase 7.",
+    "Handlers stay thin (parse -> call store -> encode); coverage concentrates in store/.",
+    "No map[string]any in any response (Step 8 typing)."
+  ],
+
+  "prerequisites": {
+    "P-1": "Fix scope matching: wiring.go ScopesContains uses strings.HasPrefix(granted, want) — unsound (profile:read-only satisfies profile:read). Replace with exact match + explicit scopeImplies implication table. Land ALONE with regression test per existing call site.",
+    "P-2": "Real session model: add sessions table (id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at, user_agent_hash, ip_hash) with sliding renewal, server-side revocation, absolute cap. Ship with dual-read (accept old JWT cookies AND new session rows) for one release then drop, gated by auth.session.dual_read (default TRUE). SAME cookie name; format-sniffed (JWT parse vs session-token lookup); both formats present -> 400.",
+    "P-3": "CSRF infrastructure: no CSRF code exists. Double-submit token (__Host-csrf cookie + X-CSRF-Token header) + Origin/Sec-Fetch-Site enforcement for cookie principals on unsafe methods. ALSO accept token from hidden form field (csrf_token) for application/x-www-form-urlencoded POSTs (synchronizer-token, rendered server-side) so no-JS forms work.",
+    "P-4": "Migrations: sessions, idempotency_keys, backup_config, backup_runs, backup_restores, takedowns, tos_documents, pending_deletions (id, user_id, requested_at, status, approved_by, approved_at), + updated_at/version on users/public_keys/proof_claims/profile_links (ETag on GET).",
+    "P-5": "Store methods: SetUserDisplayName, UpdateProfileLink, DeleteWebAuthnCredential (refuse last), GetTenantByID, GetTenantByDID, ListUsersPage, ListAuditPage, ListClientsPage, ListTenantsPage, CountUsers, DeleteUser."
+  },
+
+  "api_conventions": {
+    "base": "https://id.<domain>/api/v1",
+    "versioning": "URL path major version; additive within v1; breaking => v2 alongside.",
+    "media_types": "application/json; charset=utf-8 requests/responses; application/problem+json errors; multipart/form-data for avatar only; application/x-www-form-urlencoded for no-JS form POSTs (with hidden csrf_token field).",
+    "json_casing": "snake_case.",
+    "timestamps": "RFC 3339 UTC, always Z-suffixed.",
+    "collections": "Admin lists: {\"data\":[...],\"offset\":N,\"limit\":N,\"total\":N}. Audit log (genuinely unbounded): {\"data\":[...],\"next_cursor\":\"...\"|null}. Never a bare array.",
+    "pagination": "Admin lists: offset/limit (?limit=1..200&offset=). Audit log: opaque cursor ?limit=1..200&cursor=. Cursor = base64(sort_key,id).",
+    "sorting": "Fixed per collection, documented. No arbitrary ?sort=.",
+    "concurrency": "ETag on single-resource GET (cheap, useful for caching). NO mandatory If-Match on PUT/PATCH/DELETE (single-user server, no concurrent-writer contention).",
+    "idempotency": "Idempotency-Key header required on POSTs with genuine external side effects (invite send, backup run, backup restore); 24h retention; replay returns original response; email sent only on first execution inside the idempotent handler. IPFS pin is a natural no-op (no Idempotency-Key).",
+    "body_limits": "MaxBytesReader per route (64 KiB JSON default, 2 MiB avatar) -> 413.",
+    "caching": "Authenticated: no-store. Public reads: public, max-age=60. All: X-Content-Type-Options nosniff, Vary: Origin, Authorization, Cookie.",
+    "cors": "Deny by default; allowlist only via api.cors_origins config; never * alongside credentials.",
+    "request_id": "X-Request-Id echoed/generated; included in every problem response as instance and every log line.",
+    "rate_limits": "Per-IP token bucket only (no per-principal buckets); 429 with Retry-After + RateLimit-* headers.",
+    "method_semantics": "PUT full replace, PATCH RFC 7396 merge-patch, POST /collection create, POST /resource:action for non-CRUD verbs (colon suffix).",
+    "problem_types": "Stable URIs under https://<domain>/problems/: invalid-request, validation-failed (with errors[] of {field, code, detail}), unauthenticated, insufficient-scope, forbidden, not-found, conflict, precondition-required, precondition-failed, payload-too-large, rate-limited, not-implemented, internal.",
+    "status_discipline": "Never 500 for client error. 403 for scope/role failure. 404 (not 403) for cross-tenant resources (no tenant-enumeration oracle)."
+  },
+
+  "authn_authz_model": {
+    "principals": {
+      "end_user_browser": "session cookie + CSRF token; scopes derived from user record: self:*, profile:*, keys:*, proofs:*, sessions:*, tokens:*, export:*, account:delete.",
+      "end_user_programmatic": "bearer, audience sovereign-api; granted subset requested at issue (self-issued via POST /me/tokens, show-once).",
+      "admin": "as above + IsAdmin on user record; admin:* scopes require BOTH scope AND user.IsAdmin.",
+      "invite_bearer": "one-time invite token; exchange-only for programmatic: may call POST /auth/invite/redeem and nothing else. Browser GET /invite/{token} is ANONYMOUS (exempt from authn middleware), redeems token, mints SESSION cookie, 303s to /panel.",
+      "anonymous": "none; /api/v1/public/*, /meta/*, health, GET /invite/{token}."
+    },
+    "scope_taxonomy": [
+      "self profile keys proofs sessions tokens export account",
+      "admin:tenants admin:users admin:clients admin:backup admin:moderation admin:audit admin:ipfs admin:system"
+    ],
+    "scope_granularity": "Coarse scopes (C2): self, profile, keys, proofs, sessions, tokens, export, account, admin:* (with admin:tenants/users/clients/backup/moderation/audit/ipfs/system as the coarse granularity). Read/write implied by scope; scopeImplies table is small and explicit (e.g. profile:write implies profile:read).",
+    "middleware_chain": [
+      "request-id -> panic-recover -> body-limit -> per-route timeout (route-table column; backup run/restore long-running) -> CORS (api.cors_origins) -> rate-limit (per-IP) -> authn (bearer XOR cookie; audience-checked; dual-read format-sniffed, both formats -> 400) -> CSRF (cookie principals, unsafe methods; hidden csrf_token field for form-encoded no-JS POSTs) -> scope authz (declared per route, table-driven, coarse scopes) -> conditional-request (ETag on GET only) -> idempotency (invite + backup run/restore) -> handler -> problem+json mapper -> access log"
+    ],
+    "rule": "Every route declares its required scope AND its per-route timeout in the route table, so a single test can assert no route has an empty scope requirement."
+  },
+
+  "package_layout": {
+    "internal/api": "router.go (route table: scope + timeout per route), problem/, dto/, middleware/, v1/ (auth, me, profile, keys, proofs, credentials, sessions, admin_*, meta, public).",
+    "internal/store": "net/http-free persistence + business logic; handlers call store directly (C1).",
+    "internal/web": "embed.go (go:embed dist), shared/api.js, shared/simple.css (vendored D-9), panel/ (index.html, panel.js), admin/ (index.html, admin.js).",
+    "internal/legacyforms": "no-JS form adapters over store (D-7), rendering hidden csrf_token field (B1).",
+    "openapi/": "sovereign.v1.yaml.",
+    "docs/reference/api/": "generated from spec."
+  },
+
+  "endpoint_catalog": {
+    "meta_health": [
+      "GET /api/v1/meta/capabilities (machine-readable wired features)",
+      "GET /api/v1/meta/version (build var)",
+      "GET /api/v1/health, /api/v1/ready",
+      "GET /api/v1/openapi.json (from embedded spec)"
+    ],
+    "auth_session": [
+      "POST /auth/invite/redeem (invite token, exchange-only for programmatic)",
+      "GET /auth/session (current principal, tenant, scopes, onboarding state)",
+      "POST /auth/session/refresh (sliding renewal)",
+      "DELETE /auth/session (revoke current)",
+      "POST /auth/webauthn/register/begin|finish (session-derived user, NOT ?handle=)",
+      "POST /auth/webauthn/login/begin|finish (anon, uniform response for unknown handles)",
+      "GET /invite/{token} ANONYMOUS browser entry point: redeems token, mints SESSION cookie, 303 /panel (not exchange-only; token-in-URL leak acknowledged)"
+    ],
+    "self": [
+      "GET/PATCH /me (self:read/self:write)",
+      "DELETE /me (account:delete) -> REQUEST + admin approval via pending_deletions [USER-APPROVED decision 4]",
+      "GET /me/onboarding, POST /me/tos",
+      "GET /me/export (export:read)",
+      "GET/PUT/DELETE /me/profile, POST /me/profile:publish|:unpublish",
+      "PUT/DELETE /me/profile/avatar (multipart)",
+      "GET/POST /me/profile/links, PATCH/DELETE /me/profile/links/{id}, POST /me/profile/links:reorder",
+      "GET/POST /me/keys, GET/DELETE /me/keys/{id}, POST /me/keys/{id}:revoke",
+      "GET/POST /me/proofs, DELETE /me/proofs/{id}, POST /me/proofs/{id}:verify (wires internal/proofs)",
+      "GET /me/credentials, DELETE /me/credentials/{id} (409 on last)",
+      "GET /me/sessions, DELETE /me/sessions/{id}, DELETE /me/sessions",
+      "GET/POST /me/tokens (POST creates programmatic token, show-once, scope-subset selection), DELETE /me/tokens/{family_id}"
+    ],
+    "admin": [
+      "GET/POST /admin/tenants, GET/DELETE /admin/tenants/{id}",
+      "GET/POST /admin/users, GET/PATCH/DELETE /admin/users/{id}",
+      "POST /admin/users/{id}/invites (Idempotency-Key required; email sent inside idempotent handler)",
+      "GET /admin/users/{id}/credentials, POST /admin/users/{id}/sessions:revoke",
+      "GET/POST /admin/clients, GET/DELETE /admin/clients/{id}",
+      "POST /admin/clients/{id}/secret:rotate (show-once [USER-APPROVED decision 5])",
+      "GET/PUT /admin/backup/config (persists, drives backup.Scheduler)",
+      "GET/POST /admin/backup/runs, GET /admin/backup/runs/{id} (long-running)",
+      "POST /admin/backup/restores (confirm:true + Idempotency-Key; long-running)",
+      "GET/POST /admin/moderation/takedowns",
+      "GET /admin/audit (real actor field; cursor pagination)",
+      "GET/POST /admin/ipfs/pins, GET /admin/ipfs/pins/{cid} (non-panicking CID validator; NO Idempotency-Key)",
+      "GET/PUT /admin/tos (ToS document + version)",
+      "GET/PUT /admin/system/info (config summary secrets redacted, wired features, scheduler status)",
+      "GET /admin/deletion-requests, POST /admin/deletion-requests/{id}:approve|:reject (approve cascades, reject no-op)"
+    ],
+    "public_mirrors": [
+      "GET /api/v1/public/profile (404 when unpublished, no enumeration)",
+      "GET /api/v1/public/keys",
+      "GET /api/v1/public/proofs"
+    ]
+  },
+
+  "thin_client": {
+    "shell": "One index.html + one ES module + shared api.js, go:embed, served with strict CSP (default-src 'none'; script-src 'self'; connect-src 'self'; no external origins), no inline <script>.",
+    "api_js": "reads __Host-csrf cookie, sends X-CSRF-Token on unsafe methods; normalizes problem+json into ApiError; tracks ETag; handles 401/403/429; generates Idempotency-Key for invite + backup run/restore.",
+    "panel": "Client-side step machine driven by GET /api/v1/me/onboarding. Deletes /panel/passkey flag toggle (set server-side on successful registration). New surfaces: keys, proofs+verify, credentials, sessions, tokens (incl create via POST /me/tokens), profile links reorder, publish toggle, avatar, export, deletion request.",
+    "admin": "Session-cookie auth like panel [supersedes bearer-only AdminGuard HTML-form gap]. Views: dashboard, tenants, users+invite, clients+secret rotation, backups, moderation, audit, IPFS pins, system info, deletion requests."
+  },
+
+  "phases": {
+    "0": "Prerequisites: P-1 scope matching (alone, wave 1), P-2 sessions (config-gated dual-read), P-3 CSRF (incl form-encoded no-JS), P-4 migrations (incl pending_deletions), P-5 store methods, config options (dual_read + cors_origins). Exit: migration up/down tests, scope table test incl profile:read-only regression, concurrent session-revoke race test, dual-read overlap test, CSRF form-encoded matrix.",
+    "1": "Foundation: api/problem, api/dto, route table (scope + timeout per route), full middleware chain, OpenAPI skeleton + drift test, /meta/*, /health, /ready, auth & session endpoints, server assembly (mount /api/v1). Exit: drift test fails on deliberately-omitted route, middleware order test, no-route-without-scope test, server assembly smoke test.",
+    "2": "Self API: identity/profile/keys/proofs/sessions handlers (direct on store) + all /me/* (incl POST /me/tokens, DELETE /me -> pending_deletions). Wires internal/keys and internal/proofs. Exit: scope matrix, ETag-on-GET tests, cross-tenant IDOR matrix returns 404, token create show-once.",
+    "3": "Admin API: tenants/clients/backup/moderation/capabilities handlers (direct on store) + all /admin/* (incl deletion-requests). Backup config genuinely persists + drives Scheduler; long-running restores. Exit: non-admin 403 on every admin route, idempotency replay test (one email), backup config->scheduler-start integration test, deletion-request approve/reject.",
+    "4": "Public API + truth: /api/v1/public/*, capabilities derived from actual wiring, NodeInfo + README status sourced from it. Exit: every README claim maps to capabilities entry AND passing E2E test.",
+    "5": "Panel client: web/shared, web/panel, vendored CSS, CSP, embed + asset handler. Exit: asset/CSP header tests, legacyforms no-JS ToS + profile path test (incl CSRF form-encoded).",
+    "6": "Admin client: web/admin, all admin views (incl deletion requests). Exit: asset/CSP tests, smoke test every admin API route reachable from a view.",
+    "7": "Decommission: feature-parity gate (every function in panel.go + admin/{users,backup}.go maps to API endpoint + client surface) THEN delete internal/server/panel.go templates, internal/admin/{users,backup}.go HTTP layers; /panel/* and /admin/* become client shells + legacyforms. Exit: deadcode clean, no html/template outside web/ and hyperlink.",
+    "8": "Hardening & docs: rate limits tuned (per-IP), docs/reference/api/, docs/howto/{user,admin,developer}, ADRs D-1..D-9 (D-4 revised), CHANGELOG (incl dual_read flip-to-false). Exit: load test on /auth/*, docs build, per-package coverage >=80%."
+  },
+
+  "testing_strategy": [
+    "store-backed handlers: table-driven unit tests vs temp SQLite store, no HTTP, coverage >=90%.",
+    "api/dto: golden-file JSON tests (locks wire format).",
+    "routing/middleware: httptest matrices — scope x route, CSRF x method x principal x content-type (incl form-encoded no-JS), tenant A vs B for every tenant-scoped resource.",
+    "contract: bidirectional OpenAPI drift test (kin-openapi test-only dep); response-validation test per handler.",
+    "idempotency/concurrency: replay tests (one email, same token); -race on invite redeem, session revoke, link reorder, first-admin.",
+    "negative_security: missing/expired/wrong-audience/wrong-issuer tokens; bearer+cookie together -> 400; oversized -> 413; cross-origin unsafe -> 403; dual-read both-formats -> 400.",
+    "thin_clients: asset/CSP header assertions in Go. No browser E2E [USER-APPROVED decision 7].",
+    "capabilities_truth: capabilities subset features with passing E2E tests, README claims subset capabilities.",
+    "deletion_flow: request -> pending -> admin approve -> cascade; reject -> no-op.",
+    "timeout: slow backup restore not killed by default per-route timeout."
+  ],
+
+  "observability": [
+    "Structured slog access log: request ID, principal ID (never token), tenant, route pattern, status, duration, bytes.",
+    "Audit-log writes for every state-changing admin action AND security-relevant self action (ToS accept, credential add/remove, session revoke, key revoke, token issue), with real actor from P-2.",
+    "/api/v1/admin/system/info surfaces scheduler status, last backup error, migration version, wired capabilities."
+  ],
+
+  "risks": [
+    "Scope/permission regression during ScopesContains rewrite -> land P-1 alone with regression test per call site.",
+    "Session rework locks users out -> P-2 dual-read gated by auth.session.dual_read (default TRUE), then operator flips to false and drops old JWT cookies.",
+    "CSRF breaks scripted clients or no-JS forms -> bearer path exempt by design (D-6); hidden csrf_token field for form-encoded no-JS POSTs; document in CHANGELOG.",
+    "Endpoint sprawl -> no-route-without-scope + OpenAPI drift tests make untested routes structurally hard to merge.",
+    "Thin client becomes a de-facto framework -> hard cap: no build step, no npm, one shared module.",
+    "Coverage dilution -> thin handlers, coverage concentrates in store/.",
+    "Long-running backup restore killed by default timeout -> per-route timeout column; backup run/restore long-running."
+  ],
+
+  "prior_decisions": [
+    "USER DIRECTIVE (2026-08-28): entire application exposes a REST API (JSON) for all admin AND user functionality; HTML pages become thin fetch() clients. Supersedes the admin-auth fork and the Steps 5-8 B13 session-cookie-vs-API-only decision.",
+    "USER sign-off (2026-08-28): D-1 identity host only; D-7 keep no-JS fallback; DELETE /me = request + admin approval; client secret rotation = show-once; OpenAPI = hand-written + drift test; no browser E2E.",
+    "Steps 1-4 merged (8183953). Strict config, argon2id client secrets, refresh rotation are baseline.",
+    "admin is INSTANCE-scoped (Step 3).",
+    "Codacy gosec ignores inline #nosec; use .codacy.yml exclude_paths.",
+    "REVIEWER/CRITIC AMENDMENTS (2026-08-28): B1 CSRF form-encoded no-JS fallback; M1 GET /invite/{token} anonymous session-mint; M2 pending_deletions + admin deletion-request endpoints; M3 POST /me/tokens; M4 per-route timeout column (backup long-running); M5 email inside idempotent handler; M6 dual-read same cookie name format-sniffed; R1 P-1 alone wave 1; R2 dual_read config-gated; R3 config options task; R4 feature-parity gate; R5 server-assembly task; C1 drop core/* (handlers call store directly); C2 coarse scopes; C3 no If-Match; C4 offset/limit admin lists; C5 per-IP rate limit; C6 no IPFS idempotency."
+  ],
+
+  "verification_gates": [
+    "task lint = 0 issues; task vet pass; go test ./... -race all pass; task vulncheck 0 reachable.",
+    "scripts/coverage-gate.sh >=80% total AND per-package (store packages >=90% where targeted).",
+    "OpenAPI drift test green both directions.",
+    "No route has an empty scope requirement (single test).",
+    "Cross-tenant IDOR matrix returns 404 for all tenant-scoped resources.",
+    "Bearer+cookie together -> 400; oversized body -> 413; cross-origin unsafe -> 403; dual-read both-formats -> 400.",
+    "Audit-log actor field populated from authenticated principal (A8).",
+    "Deletion flow: request -> pending -> admin approve -> cascade; reject -> no-op.",
+    "Slow backup restore not killed by default per-route timeout.",
+    "deadcode clean after Phase 7.",
+    "Every README/CHANGELOG feature claim maps to a capabilities entry AND a passing E2E test."
+  ],
+
+  "in_scope_but_separate": [
+    "A8 (audit-log actor/id) folds into the admin audit endpoint work (GET /admin/audit).",
+    "B13 (AdminGuard) resolved by D-6 + admin thin client (session cookie).",
+    "B9/B10/B11/B12 CSRF + passkey + webauthn + indieauth hardened in the API + P-3 CSRF.",
+    "B6 proofs SSRF wiring into /me/proofs/{id}:verify.",
+    "A3 backup wiring into /admin/backup/*.",
+    "A4/A5/A6/A7 atproto + blob prefix + DAG-CBOR + DID resolution remain in Steps 5-8 plan, NOT this REST plan (data plane).",
+    "G typing (map[string]any -> named DTOs) is native to this plan (dto package)."
+  ]
+}

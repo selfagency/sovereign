@@ -23,6 +23,8 @@ type Config struct {
 	SMTP              SMTPConfig    `yaml:"smtp" mapstructure:"smtp"`
 	Log               LogConfig     `yaml:"log" mapstructure:"log"`
 	OpenRegistrations bool          `yaml:"open_registrations" mapstructure:"open_registrations"`
+	Auth              AuthConfig    `yaml:"auth" mapstructure:"auth"`
+	API               APIConfig     `yaml:"api" mapstructure:"api"`
 }
 
 // StorageConfig configures the protocol blob backend.
@@ -66,6 +68,27 @@ type LogConfig struct {
 	Format string `yaml:"format" mapstructure:"format"`
 }
 
+// AuthConfig configures the identity/auth subsystem.
+type AuthConfig struct {
+	Session SessionConfig `yaml:"session" mapstructure:"session"`
+}
+
+// SessionConfig configures browser sessions.
+type SessionConfig struct {
+	// DualRead, when true (default), accepts BOTH legacy JWT session cookies
+	// AND new server-side session rows during the migration window.
+	// Operators flip this to false after the transition release to drop
+	// legacy JWT cookies. Fail-safe default: true.
+	DualRead bool `yaml:"dual_read" mapstructure:"dual_read"`
+}
+
+// APIConfig configures the control-plane REST API.
+type APIConfig struct {
+	// CORSOrigins is the allowlist for cross-origin browser access.
+	// Deny-by-default (empty). Never '*' alongside credentials.
+	CORSOrigins []string `yaml:"cors_origins" mapstructure:"cors_origins"`
+}
+
 // LoadConfig reads and parses a YAML config file.
 func LoadConfig(path string) (*Config, error) {
 	// #nosec G304 -- path is a caller-provided config path (CLI flag), not user input.
@@ -82,7 +105,41 @@ func LoadConfig(path string) (*Config, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	// DualRead defaults to true (fail-safe against lockout during the
+	// migration window). Only the ABSENT key defaults; an explicit
+	// `auth.session.dual_read: false` is preserved as-is. This must be done
+	// here (not in Validate) because the yaml.v3 plain-bool decode cannot
+	// distinguish an absent key from an explicit false.
+	if !yamlKeyPresent(data, "auth", "session", "dual_read") {
+		cfg.Auth.Session.DualRead = true
+	}
 	return &cfg, nil
+}
+
+// yamlKeyPresent reports whether the given dot-path key exists in the YAML
+// document. It is used to apply absent-key defaults that must not override an
+// explicit value (e.g. a bool whose default is true but whose zero value is
+// false).
+func yamlKeyPresent(data []byte, path ...string) bool {
+	var m map[string]any
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return false
+	}
+	for i, key := range path {
+		v, ok := m[key]
+		if !ok {
+			return false
+		}
+		if i == len(path)-1 {
+			return true
+		}
+		nm, ok := v.(map[string]any)
+		if !ok {
+			return false
+		}
+		m = nm
+	}
+	return true
 }
 
 // Validate checks required config fields.

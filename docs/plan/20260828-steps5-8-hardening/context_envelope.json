@@ -1,0 +1,127 @@
+{
+  "plan_id": "20260828-steps5-8-hardening",
+  "objective": "Implement remediation Steps 5-8 of the exhaustive sovereign code review: web-surface security, storage correctness, wire-or-delete dead features, and typing hygiene.",
+  "complexity": "HIGH",
+  "branch": "main @ 8183953 (PR #40 Steps 1-4 merged)",
+  "tech_stack": "Go 1.27, CGO_ENABLED=0, modernc.org/sqlite (pure-Go), zitadel/oidc/v3, go-webauthn, minio-go, bluesky-social/indigo, golang.org/x/crypto. Single-binary server owning identity/auth/storage/protocol adapters.",
+  "module": "github.com/selfagency/sovereign",
+
+  "constraints": [
+    "TDD mandatory: write failing test first, then implement (RED-GREEN-REFACTOR).",
+    "All gates must pass before commit: lint, vet, go test ./... -race, coverage >=80%, vulncheck.",
+    "No CGO_ENABLED=1 dependency ever. Pure-Go SQLite (modernc.org/sqlite), not mattn/go-sqlite3.",
+    "Fail closed, defense in depth. Untrusted input parsed with fail-closed posture.",
+    "Tenant-scoping: every store query and route touching tenant data scoped by tenant_id. Never trust client-supplied tenant/account ID without checking authenticated principal.",
+    "Adapters live in internal/wiring/, not inline in server/.",
+    "SSRF-sensitive code must resolve DNS and reject loopback/private/link-local/multicast/cloud-metadata ranges, cap redirects, cap body size, strict timeout, run in background not sync request path.",
+    "New public endpoints need: explicit content-type, cache headers, explicit 404 for unknown tenant, behavior on unpublished/revoked/expired.",
+    "New authenticated endpoints need IDOR test proving account cannot read/write other tenants' data.",
+    "Coverage gate is 80% per-package and total (enforced by scripts/coverage-gate.sh).",
+    "Narrow, commented .golangci.yml exclusions only for justified findings.",
+    "License-compatible with GPL-3.0-or-later; no new deps without justification.",
+    "PII redaction: never log key material, tokens, full proof payloads at info level."
+  ],
+
+  "conventions": [
+    "Package doc comment at top of primary file in each package.",
+    "Error style: lowercase, prefixed \"<pkg>: message\", wrapped with fmt.Errorf(\"...: %w\", err). No panics in request-path code.",
+    "Interface satisfaction assertions: var _ SomeInterface = (*Impl)(nil) after type.",
+    "Tests colocated (foo.go + foo_test.go), table-driven preferred, real fixtures over mocks.",
+    "Security-relevant packages need explicit negative tests (malformed input, oversized input, private-key rejection, SSRF targets, IDOR, concurrency on shared state).",
+    "E2E tests live in internal/server/e2e_test.go + e2e_harness_test.go — extend harness.",
+    "Run task lint test vet before done.",
+    "#nosec inline comments for justified gosec exclusions; .codacy.yml engines.gosec.exclude_paths for Codacy-specific (Codacy gosec ignores inline #nosec)."
+  ],
+
+  "architecture_snapshot": {
+    "server_assembly": "internal/server/server.go: New() -> buildRouter() (now returns error, fail-closed), OIDC provider + WebAuthn handler fatal on init error (Steps 1-4).",
+    "tenant_resolution": "internal/tenant: NormalizeHost + FromContext. Keys/proofs endpoints now use tenant.FromContext + t.ID (Steps 1-4).",
+    "auth_primitives": "access_token.go validates claims (exp/sub/iss/aud/typ/jti) (Step 4). Client secrets argon2id-hashed (migration v5). Refresh tokens 30-day + rotation/reuse detection (migration v6).",
+    "storage": "internal/storage: fs.go (Filesystem backend), s3.go (minio-go), prefixed.go (tenant prefix).",
+    "protocols": "internal/protocols/{activitypub, atproto, chatfederation, hyperlink, indieauth, ipfspin, nodeinfo, remotestorage, solid, webfinger, wellknown}.",
+    "backup": "internal/backup: scheduler.go (UNWIRED - dead code), FSDestination, S3Destination.",
+    "moderation": "internal/moderation: ToSGate (dead), AuditLog, takedown.",
+    "proofs": "internal/proofs: verify.go (UNWIRED), SSRF weaknesses.",
+    "oidc": "internal/auth/sqlstore.go SQLStore (E1: userinfo/introspection no-op, session termination no-op, code-map leak).",
+    "setup": "internal/setup (dead package).",
+    "licenses": "internal/licenses (dead package).",
+    "keys": "internal/keys pgp.go ssh.go (dead package - parsing/fingerprinting).",
+    "admin": "internal/admin: backup.go (Apply is no-op - A3), users.go, AdminGuard bearer-only (B13).",
+    "server_routes": "panel.go (cookie-authed POSTs, no CSRF - B9/B10), invite.go (atomic now - Step 3), indieauth.go (B12), endpoints.go (keys/proofs, now tenant-correct)."
+  },
+
+  "in_scope_findings": {
+    "STEP5_web_surface": {
+      "B9": "CSRF: /panel/tos, /panel/passkey, /panel/profile accept cookie-authed POSTs with no CSRF token / Origin validation. SameSite=Lax insufficient (sibling subdomains).",
+      "B10": "PasskeySetup set true on any authed POST, no credential verification. Derive from ListCredentials or set only in RegisterFinish.",
+      "B2": "SMTP header injection: internal/admin/users.go:42-46,79-86 + internal/mail/mail.go:96-106. email interpolated into To: with only TrimSpace, no CRLF rejection / RFC 5321 validation.",
+      "B11": "WebAuthn endpoints trust client-supplied handle: internal/auth/webauthn_handler.go, mounted unauthenticated server.go:274-277. RegisterFinish re-binds challenge; handle enumeration.",
+      "B12": "IndieAuth: internal/server/indieauth.go. state reused as authorization code, codes not invalidated, no consent, string-concat redirect, me from token request, session not deleted.",
+      "B14": "No rate limiting or request-size limits anywhere. Unbounded io.ReadAll on PUT (remotestorage, solid/ldp), no MaxBytesReader on forms. No IdleTimeout/ReadHeaderTimeout on http.Server.",
+      "B13": "AdminGuard bearer-only but handlers render HTML forms -> unusable. Pick session+cookie+CSRF or API-only JSON."
+    },
+    "STEP6_storage": {
+      "D1": "fs.go Put not crash-safe (no temp+rename+fsync), metadata write unsynced, Get ignores sidecar errors, List returns empty content types, ctx ignored.",
+      "D2": "fs.go + prefixed.go path traversal / symlink handling: path.Join keys, need filepath.Clean + prefix verify + os.OpenInRoot (Go 1.24+) + reject control chars.",
+      "D3": "s3.go Put buffers entire object in memory (io.ReadAll before PutObject). Stream with size=-1 or enforce MaxBytesReader.",
+      "D4": "NewS3 does network I/O + bucket creation during construction with context.Background(), no timeout. Accept ctx, dial timeout, opt-in bucket creation.",
+      "B1": "S3 Secure never propagated from config (defaults false -> plaintext HTTP). Add secure (default true) to server.S3Config, reject https:// scheme in endpoint, allow_insecure override."
+    },
+    "STEP7_wire_or_delete": {
+      "A3": "Backup config is a no-op (Apply just logs, returns 200 'saved'). Scheduler never constructed. Wire: persist config, construct Destination, start Scheduler, surface Status. Or return 501.",
+      "A4": "atproto PDS wired with nil Backend/RepoFactory/SigningKey -> 6/8 XRPC methods broken. Wire backendFor, per-tenant RepoFactory under DataDir, SigningKey.",
+      "A6": "atproto records capped at 255 bytes (fixed 0x58 CBOR header). Encode as proper DAG-CBOR maps via indigo/ipld-go-ipld-prime.",
+      "A7": "atproto getProfile never resolves DIDs (dead branch). Add GetTenantByDID or delete branch + reject DID input.",
+      "A8": "Audit entry IDs collide (resource-action-RFC3339Nano), Actor set to e.Action not admin principal. Random ID + thread authenticated admin subject.",
+      "B5": "WAC (internal/protocols/solid/wac.go) dead code. Wired ACLChecker permits all unauth reads by design. Wire WACChecker fail-closed, public access opt-in via acl:agentClass foaf:Agent.",
+      "B6": "Proof verification never wired (no caller). Verifier SSRF: hostFromURL manual parse, DNS resolve before request (rebinding window), no redirect-hop revalidation, single Read no status/content-type check, substring matching.",
+      "C1": "Dead packages/types: internal/setup, internal/licenses, internal/keys (pgp/ssh), internal/protocols/chatfederation (localpart), activitypub sigverify, solid.WACChecker, backup.Scheduler, ipfspin.NewPSAClient, moderation.ToSGate, moderation.MemoryAuditLog. Each: wire, delete, or document not-wired.",
+      "C2": "ToSGate exempts /admin/tos which doesn't exist. Align exempt path with real /panel/tos.",
+      "E1": "OIDC SQLStore: auth requests/codes in-memory only, DeleteAuthRequest leaks code->ID map, CreateAccessToken no metadata, TerminateSession no-op, userinfo/introspection empty. Persist with TTL, implement userinfo/introspection/session termination."
+    },
+    "STEP8_typing": {
+      "G": "36 'any' occurrences. map[string]any response literals -> named structs (didDocHandler, xrpc_server.go). Annotate justified external-boundary any. Add nosniff + Cache-Control headers, surface encoder errors."
+    }
+  },
+
+  "out_of_scope": [
+    "No new feature work beyond the review's Steps 5-8.",
+    "Do not implement full ActivityPub federation / Matrix/XMPP server / embedded IPFS node / smart contracts (belongs to hypernext).",
+    "A5 (atproto blob tenant prefix) is IN scope now — it must be fixed when wiring atproto Backend (was deferred from Step 2 as it depended on A4 wiring).",
+    "Steps 1-4 already merged (8183953) — do not redo."
+  ],
+
+  "breaking_changes_expected": [
+    "WAC enforcement: Solid resources that were world-readable become fail-closed (403) unless ACL grants public access. Document.",
+    "OIDC userinfo/introspection now return real claims (was empty) — behavior change for RPs.",
+    "Wire-or-delete: any deleted feature (e.g. MemoryAuditLog, NewPSAClient) may break documented config surface. Document removals.",
+    "CSRF enforcement on /panel/* breaks scripted clients (document).",
+    "Rate limiting / MaxBytesReader changes behavior on large uploads (document limits)."
+  ],
+
+  "verification_gates": [
+    "task lint = 0 issues",
+    "task vet pass",
+    "go test ./... -race = all packages pass",
+    "scripts/coverage-gate.sh >=80% total AND per-package (no package below 80%)",
+    "task vulncheck = 0 reachable",
+    "Concurrency tests: invite redemption, first-admin, refresh rotation (Step 3 baseline, must stay green)",
+    "CSRF rejection tests on every cookie-authenticated mutation",
+    "SSRF suite: blocked ranges, redirect hops, DNS rebinding, oversized body",
+    "Path-traversal + symlink fuzz against FS + Prefixed",
+    "Cross-tenant IDOR tests for keys, proofs, blobs, Solid, remoteStorage",
+    "Config strictness test rejects unknown/removed keys (baseline from Step 1)",
+    "Every README/CHANGELOG feature claim maps to a passing E2E test through server.Server",
+    "any inventory reduced to justified external-boundary cases, each annotated"
+  ],
+
+  "prior_decisions": [
+    "USER DIRECTIVE (2026-08-28, supersedes admin-auth fork): The entire application must expose a REST API (JSON) covering all admin AND user functionality. HTML pages become thin clients that call the API via fetch(). This is the authoritative auth-model for B13 and the panel: admin routes (users, backup, moderation/takedown, ipfs) and user routes (tos, passkey, profile) expose JSON endpoints; HTML forms are replaced by JS fetch() clients hitting those endpoints.",
+    "admin is INSTANCE-scoped (Step 3 T-critic1) — first user of any tenant becomes instance admin via single atomic INSERT CASE.",
+    "Client secrets argon2id (m=65536,t=3,p=1,16B salt,32B key), max 128B, sentinel '!invalidated-by-migration-v5'.",
+    "Refresh tokens 30-day expiry + rotation/reuse detection (family_id/rotated_at, migration v6); existing tokens survive grace.",
+    "Strict config: yaml KnownFields + viper ErrorUnused. Removed keys: identity_host, sqlite.*, tls.*, atproto.*, backup.*. Kept ipfs.enabled, audience, open_registrations.",
+    "Codacy gosec ignores inline #nosec G402; use .codacy.yml engines.gosec.exclude_paths.",
+    "PR #40 merged 8183953; all Steps 1-4 gates green."
+  ]
+}

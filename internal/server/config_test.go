@@ -64,6 +64,66 @@ func TestConfigNoSQLiteMode(t *testing.T) {
 	}
 }
 
+// TestConfigDualReadDefault verifies absent auth.session.dual_read defaults to
+// true (fail-safe against lockout during the migration window).
+func TestConfigDualReadDefault(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, "domain: example.com\ndata_dir: /tmp/data\n"))
+	if err != nil {
+		t.Fatalf("LoadConfig = %v, want nil", err)
+	}
+	if !cfg.Auth.Session.DualRead {
+		t.Fatal("absent auth.session.dual_read = false, want true (default)")
+	}
+}
+
+// TestConfigDualReadExplicitFalse verifies an explicitly-set
+// auth.session.dual_read: false is preserved (not overridden by the default).
+func TestConfigDualReadExplicitFalse(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, "domain: example.com\ndata_dir: /tmp/data\nauth:\n  session:\n    dual_read: false\n"))
+	if err != nil {
+		t.Fatalf("LoadConfig = %v, want nil", err)
+	}
+	if cfg.Auth.Session.DualRead {
+		t.Fatal("explicit auth.session.dual_read: false = true, want false")
+	}
+}
+
+// TestConfigCORSOriginsParsed verifies api.cors_origins parses into the
+// APIConfig.CORSOrigins slice.
+func TestConfigCORSOriginsParsed(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, "domain: example.com\ndata_dir: /tmp/data\napi:\n  cors_origins:\n    - https://app.example.com\n"))
+	if err != nil {
+		t.Fatalf("LoadConfig = %v, want nil", err)
+	}
+	if len(cfg.API.CORSOrigins) != 1 || cfg.API.CORSOrigins[0] != "https://app.example.com" {
+		t.Fatalf("cors_origins = %v, want [https://app.example.com]", cfg.API.CORSOrigins)
+	}
+}
+
+// TestConfigCORSOriginsAbsent verifies an absent api.cors_origins yields an
+// empty (deny-by-default) slice.
+func TestConfigCORSOriginsAbsent(t *testing.T) {
+	cfg, err := LoadConfig(writeConfig(t, "domain: example.com\ndata_dir: /tmp/data\n"))
+	if err != nil {
+		t.Fatalf("LoadConfig = %v, want nil", err)
+	}
+	if len(cfg.API.CORSOrigins) != 0 {
+		t.Fatalf("absent cors_origins = %v, want empty slice", cfg.API.CORSOrigins)
+	}
+}
+
+// TestConfigExampleRoundTrip verifies config.example.yml parses under strict
+// validation (KnownFields) and yields the dual_read default of true.
+func TestConfigExampleRoundTrip(t *testing.T) {
+	cfg, err := LoadConfig("../../config.example.yml")
+	if err != nil {
+		t.Fatalf("LoadConfig(example.yml) = %v, want nil", err)
+	}
+	if !cfg.Auth.Session.DualRead {
+		t.Fatal("example.yml dual_read = false, want true")
+	}
+}
+
 // TestConfigValidMinimal verifies a minimal valid config still loads and
 // defaults are applied.
 func TestConfigValidMinimal(t *testing.T) {

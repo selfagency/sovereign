@@ -225,6 +225,11 @@ func loadServerConfig(v *viper.Viper) (*server.Config, error) {
 	})); err != nil {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
+	// DualRead defaults to true (fail-safe against lockout). Only the absent
+	// key defaults; an explicit `auth.session.dual_read: false` stays false.
+	if !strict.IsSet("auth.session.dual_read") {
+		cfg.Auth.Session.DualRead = true
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}

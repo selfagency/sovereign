@@ -27,6 +27,9 @@ var migrations = []migration{
 	{version: 4, name: "invites_and_user_state", up: migrateV4},
 	{version: 5, name: "invalidate_plaintext_client_secrets", up: migrateV5},
 	{version: 6, name: "refresh_token_expiry_and_rotation", up: migrateV6},
+	{version: 7, name: "sessions_and_idempotency", up: migrateV7},
+	{version: 8, name: "backup_and_takedown_and_tos", up: migrateV8},
+	{version: 9, name: "pending_deletions_and_tos_docs", up: migrateV9},
 }
 
 // migrate runs all pending migrations inside transactions and records each
@@ -303,6 +306,133 @@ func migrateV4(ctx context.Context, tx *sql.Tx) error {
 	}
 	for _, stmt := range stmts {
 		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateV7 adds server-side sessions and idempotency-key storage for the REST
+// API. sessions stores opaque session rows keyed by token hash; idempotency_keys
+// stores request hashes and their recorded responses so retries with the same
+// key return the stored result instead of re-executing the side effect.
+func migrateV7(ctx context.Context, tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS sessions (
+			id             TEXT PRIMARY KEY,
+			user_id        TEXT NOT NULL,
+			token_hash     TEXT NOT NULL UNIQUE,
+			created_at     TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			last_seen_at   TIMESTAMP,
+			expires_at     TIMESTAMP NOT NULL,
+			revoked_at     TIMESTAMP,
+			user_agent_hash TEXT,
+			ip_hash        TEXT
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id)`,
+		`CREATE TABLE IF NOT EXISTS idempotency_keys (
+			id              TEXT PRIMARY KEY,
+			key             TEXT NOT NULL,
+			request_hash    TEXT NOT NULL,
+			response_status INTEGER,
+			response_body   BLOB,
+			created_at      TEXT NOT NULL,
+			expires_at      TEXT NOT NULL
+		)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_idempotency_keys_key ON idempotency_keys(key)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateV8 adds backup configuration/run tracking, restore tracking, and
+// content-takedown records used by the admin and moderation surfaces.
+func migrateV8(ctx context.Context, tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS backup_config (
+			id          INTEGER PRIMARY KEY,
+			schedule    TEXT,
+			destination TEXT,
+			prefix      TEXT,
+			updated_at  TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS backup_runs (
+			id              TEXT PRIMARY KEY,
+			started_at      TEXT NOT NULL,
+			finished_at     TEXT,
+			status          TEXT NOT NULL,
+			error           TEXT,
+			size_bytes      INTEGER,
+			destination_key TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS backup_restores (
+			id          TEXT PRIMARY KEY,
+			started_at  TEXT NOT NULL,
+			finished_at TEXT,
+			status      TEXT NOT NULL,
+			error       TEXT,
+			source_key  TEXT,
+			requested_by TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS takedowns (
+			id         TEXT PRIMARY KEY,
+			resource   TEXT NOT NULL,
+			reason     TEXT NOT NULL,
+			acted_by   TEXT NOT NULL,
+			created_at TEXT NOT NULL
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// migrateV9 adds account-deletion requests and published ToS documents. It
+// also adds an updated_at column to core content tables so callers can detect
+// mutation and implement optimistic concurrency. The ALTERs are guarded against
+// an existing column so re-running on a converged schema is a no-op (matching
+// the migrateV6 pattern).
+func migrateV9(ctx context.Context, tx *sql.Tx) error {
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS pending_deletions (
+			id           TEXT PRIMARY KEY,
+			user_id      TEXT NOT NULL,
+			requested_at TEXT NOT NULL,
+			status       TEXT NOT NULL DEFAULT 'pending',
+			approved_by  TEXT,
+			approved_at  TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS tos_documents (
+			id           TEXT PRIMARY KEY,
+			version      TEXT NOT NULL,
+			content      TEXT NOT NULL,
+			published_at TEXT NOT NULL,
+			published_by TEXT
+		)`,
+	}
+	for _, stmt := range stmts {
+		if _, err := tx.ExecContext(ctx, stmt); err != nil {
+			return err
+		}
+	}
+	// Add updated_at to existing content tables if not already present.
+	for _, table := range []string{"users", "public_keys", "proof_claims", "profile_links"} {
+		var n int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = 'updated_at'`, table).Scan(&n); err != nil {
+			return err
+		}
+		if n > 0 {
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `ALTER TABLE `+table+` ADD COLUMN updated_at TEXT`); err != nil {
 			return err
 		}
 	}
