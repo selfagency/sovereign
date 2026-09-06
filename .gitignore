@@ -31,3 +31,4 @@ config.yml
 /docs/public/
 /docs/site/.hugo_build.lock
 /docs/site/resources/
+.codacy/

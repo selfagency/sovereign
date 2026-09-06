@@ -48,9 +48,10 @@ func panelHandler(st *store.Store, key *rsa.PrivateKey, issuer, audience string)
 		}
 		http.Redirect(w, r, "/panel", http.StatusSeeOther)
 	})
-	// /panel/passkey marks passkey setup complete. The actual credential is
-	// registered via the WebAuthn /webauthn/register/{begin,finish} handlers;
-	// this endpoint flips the onboarding flag once registration succeeds.
+	// /panel/passkey marks passkey setup complete. The credential is
+	// registered via the session-derived control-plane endpoints
+	// (/api/v1/auth/webauthn/register/{begin,finish}); this endpoint flips the
+	// onboarding flag once registration succeeds.
 	mux.HandleFunc("/panel/passkey", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -148,24 +149,21 @@ var panelTemplates = template.Must(template.New("panel").Parse(`<!doctype html>
 <p id="status"></p>
 </section>
 <script>
-const handle = "{{.Handle}}";
 const status = document.getElementById("status");
 const btn = document.getElementById("register");
 btn.addEventListener("click", async () => {
   try {
     status.textContent = "Contacting server…";
-    const begin = await fetch("/webauthn/register/begin?handle=" + encodeURIComponent(handle));
+    const begin = await fetch("/api/v1/auth/webauthn/register/begin", { method: "POST" });
     if (!begin.ok) throw new Error("begin failed: " + begin.status);
     const options = await begin.json();
     const cred = await navigator.credentials.create({ publicKey: options });
-    const finish = await fetch("/webauthn/register/finish?handle=" + encodeURIComponent(handle) + "&challenge=" + encodeURIComponent(options.challenge), {
+    const finish = await fetch("/api/v1/auth/webauthn/register/finish?challenge=" + encodeURIComponent(options.challenge), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(cred)
     });
     if (!finish.ok) throw new Error("finish failed: " + finish.status);
-    const done = await fetch("/panel/passkey", { method: "POST" });
-    if (!done.ok) throw new Error("complete failed: " + done.status);
     window.location.href = "/panel";
   } catch (e) {
     status.textContent = "Error: " + e.message;

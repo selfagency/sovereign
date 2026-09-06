@@ -62,30 +62,9 @@ func TestOIDCNotOnTenantHost(t *testing.T) {
 	}
 }
 
-// TestWebAuthnBeginUnknownUser verifies the WebAuthn register-begin endpoint
-// rejects an unknown user.
-func TestWebAuthnBeginUnknownUser(t *testing.T) {
-	ts := startTestServer(t, &Config{}, false)
-
-	status, _ := ts.get(t, "/webauthn/register/begin?handle=nobody", "id.example.com")
-	if status != 400 {
-		t.Fatalf("register begin unknown user status = %d, want 400", status)
-	}
-}
-
-// TestWebAuthnBeginMissingHandle verifies the WebAuthn register-begin
-// endpoint requires a handle.
-func TestWebAuthnBeginMissingHandle(t *testing.T) {
-	ts := startTestServer(t, &Config{}, false)
-
-	status, _ := ts.get(t, "/webauthn/register/begin", "id.example.com")
-	if status != 400 {
-		t.Fatalf("register begin missing handle status = %d, want 400", status)
-	}
-}
-
 // TestWebAuthnNotOnTenantHost verifies WebAuthn endpoints are not served on
-// tenant hosts.
+// tenant hosts (the legacy /webauthn/* routes are removed; the passkey flow
+// lives on /api/v1/auth/webauthn/*).
 func TestWebAuthnNotOnTenantHost(t *testing.T) {
 	ts := startTestServer(t, &Config{}, true)
 

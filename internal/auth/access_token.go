@@ -85,6 +85,11 @@ func IssueForProfile(priv *rsa.PrivateKey, profileURL string, scopes []string, i
 // lack a non-zero future exp, have an empty sub, are signed by a different
 // key, carry a non-JWT typ header, or whose iss/aud do not match the expected
 // issuer (https://id.<domain>) and audience.
+//
+// Known limitations (accepted, fail-closed, revisit later):
+//   - aud is compared as a single string; an array-form aud claim is rejected
+//     (fail-closed, safe).
+//   - nbf (not-before) is not checked; a token valid at iat is accepted.
 func ValidateAccessToken(priv *rsa.PrivateKey, token, issuer, audience string) (*AccessToken, error) {
 	if priv == nil {
 		return nil, errors.New("auth: nil signing key")
