@@ -7,6 +7,7 @@
 package identity
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -91,25 +92,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if req.Email != nil {
-		if err := validateEmail(*req.Email); err != nil {
-			problem.ValidationFailed([]problem.FieldError{{Field: "email", Code: "invalid", Detail: err.Error()}}).Write(w)
-			return
-		}
-		if err := h.store.SetUserEmail(ctx, u.ID, strings.TrimSpace(*req.Email)); err != nil {
-			h.writeStoreErr(w, err, "set user email")
-			return
-		}
-	}
-	if req.DisplayName != nil {
-		if err := validateDisplayName(*req.DisplayName); err != nil {
-			problem.ValidationFailed([]problem.FieldError{{Field: "display_name", Code: "invalid", Detail: err.Error()}}).Write(w)
-			return
-		}
-		if err := h.store.SetUserDisplayName(ctx, u.ID, strings.TrimSpace(*req.DisplayName)); err != nil {
-			h.writeStoreErr(w, err, "set user display name")
-			return
-		}
+	if !h.applyIdentityUpdate(w, ctx, u.ID, req) {
+		return
 	}
 	updated, err := h.store.UserByID(ctx, u.ID)
 	if err != nil {
@@ -227,6 +211,33 @@ func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- helpers ---
+
+// applyIdentityUpdate validates and persists the present updateReq fields,
+// writing a problem response and returning false on the first failure. It is
+// extracted from Update to keep the handler's branching flat.
+func (h *Handler) applyIdentityUpdate(w http.ResponseWriter, ctx context.Context, userID string, req updateReq) bool {
+	if req.Email != nil {
+		if err := validateEmail(*req.Email); err != nil {
+			problem.ValidationFailed([]problem.FieldError{{Field: "email", Code: "invalid", Detail: err.Error()}}).Write(w)
+			return false
+		}
+		if err := h.store.SetUserEmail(ctx, userID, strings.TrimSpace(*req.Email)); err != nil {
+			h.writeStoreErr(w, err, "set user email")
+			return false
+		}
+	}
+	if req.DisplayName != nil {
+		if err := validateDisplayName(*req.DisplayName); err != nil {
+			problem.ValidationFailed([]problem.FieldError{{Field: "display_name", Code: "invalid", Detail: err.Error()}}).Write(w)
+			return false
+		}
+		if err := h.store.SetUserDisplayName(ctx, userID, strings.TrimSpace(*req.DisplayName)); err != nil {
+			h.writeStoreErr(w, err, "set user display name")
+			return false
+		}
+	}
+	return true
+}
 
 // self returns the authenticated principal's user record, or writes a 401/404
 // problem and returns ok=false.

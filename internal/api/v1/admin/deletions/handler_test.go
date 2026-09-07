@@ -1,6 +1,7 @@
 package deletions_test
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -180,5 +181,84 @@ func TestDeletionsNonAdminForbidden(t *testing.T) {
 		if rec.Code != http.StatusForbidden {
 			t.Fatalf("%s non-admin = %d, want 403", name, rec.Code)
 		}
+	}
+}
+
+// TestDeletionsListInvalidPagination verifies invalid limit/offset query values
+// are rejected.
+func TestDeletionsListInvalidPagination(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	for _, q := range []string{"limit=abc", "limit=-1", "offset=xyz"} {
+		rec := do(h.List, req(http.MethodGet, "/api/v1/admin/deletion-requests?"+q, adminPrincipal()))
+		if rec.Code != http.StatusBadRequest && rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s = %d, want 4xx", q, rec.Code)
+		}
+	}
+}
+
+// TestDeletionsRejectNotFound verifies rejecting a missing request is a 404.
+func TestDeletionsRejectNotFound(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	rec := do(h.Reject, req(http.MethodPost, "/api/v1/admin/deletion-requests/missing/reject", adminPrincipal()))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("reject missing = %d, want 404", rec.Code)
+	}
+}
+
+// TestDeletionsUnauthenticated verifies every handler returns 401 without a
+// principal.
+func TestDeletionsUnauthenticated(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	for name, fn := range map[string]http.HandlerFunc{
+		"list":    h.List,
+		"approve": h.Approve,
+		"reject":  h.Reject,
+	} {
+		rec := do(fn, req(http.MethodGet, "/api/v1/admin/deletion-requests", nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s unauthenticated = %d, want 401", name, rec.Code)
+		}
+	}
+}
+
+// TestDeletionsListInternalError verifies a store failure surfaces as a 500.
+func TestDeletionsListInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, adminPrincipal())
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/deletion-requests", http.NoBody).WithContext(ctx)
+	rec := do(h.List, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("list internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDeletionsApproveInternalError verifies a store failure approving surfaces
+// as a 500.
+func TestDeletionsApproveInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, adminPrincipal())
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/admin/deletion-requests/x/approve", http.NoBody).WithContext(ctx)
+	r.SetPathValue("id", "x")
+	rec := do(h.Approve, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("approve internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDeletionsNewNilLogger verifies New defaults the logger when nil is passed.
+func TestDeletionsNewNilLogger(t *testing.T) {
+	s := testStore(t)
+	h := v1deletions.New(s, nil)
+	if h == nil {
+		t.Fatal("New with nil logger returned nil handler")
 	}
 }

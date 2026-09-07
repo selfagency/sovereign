@@ -210,23 +210,8 @@ func (h *Handler) Update(w http.ResponseWriter, r *http.Request) {
 		h.writeStoreErr(w, err, "update user")
 		return
 	}
-	if req.IsAdmin != nil {
-		if err := h.store.SetUserAdmin(r.Context(), id, *req.IsAdmin); err != nil {
-			h.writeStoreErr(w, err, "update user admin")
-			return
-		}
-	}
-	if req.Email != "" {
-		if err := h.store.SetUserEmail(r.Context(), id, req.Email); err != nil {
-			h.writeStoreErr(w, err, "update user email")
-			return
-		}
-	}
-	if req.DisplayName != "" {
-		if err := h.store.SetUserDisplayName(r.Context(), id, req.DisplayName); err != nil {
-			h.writeStoreErr(w, err, "update user display name")
-			return
-		}
+	if !h.applyUserUpdate(w, r, id, req) {
+		return
 	}
 	u, err := h.store.UserByID(r.Context(), id)
 	if err != nil {
@@ -325,6 +310,31 @@ func (h *Handler) RevokeSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 // --- helpers ---
+
+// applyUserUpdate applies the subset of updateReq fields that are present,
+// writing a problem response and returning false on the first failure. It is
+// extracted from Update to keep the handler's branching flat.
+func (h *Handler) applyUserUpdate(w http.ResponseWriter, r *http.Request, id string, req updateReq) bool {
+	if req.IsAdmin != nil {
+		if err := h.store.SetUserAdmin(r.Context(), id, *req.IsAdmin); err != nil {
+			h.writeStoreErr(w, err, "update user admin")
+			return false
+		}
+	}
+	if req.Email != "" {
+		if err := h.store.SetUserEmail(r.Context(), id, req.Email); err != nil {
+			h.writeStoreErr(w, err, "update user email")
+			return false
+		}
+	}
+	if req.DisplayName != "" {
+		if err := h.store.SetUserDisplayName(r.Context(), id, req.DisplayName); err != nil {
+			h.writeStoreErr(w, err, "update user display name")
+			return false
+		}
+	}
+	return true
+}
 
 // sendInvite creates a one-time magic link for the user, persists its hash,
 // and emails the raw token to the user's address.

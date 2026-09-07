@@ -507,3 +507,143 @@ func multipartBody(t *testing.T, field, filename, content string) (body *bytes.B
 	_ = mw.Close()
 	return body, mw.FormDataContentType()
 }
+
+// TestNewNilLogger verifies New defaults the logger when nil is passed.
+func TestNewNilLogger(t *testing.T) {
+	s := testStore(t)
+	h := v1profile.New(s, testBackend(t), nil)
+	if h == nil {
+		t.Fatal("New with nil logger returned nil handler")
+	}
+}
+
+// TestDeleteAvatarNoKey verifies deleting an avatar when none is set is a 204
+// no-op (the blob-delete branch is skipped).
+func TestDeleteAvatarNoKey(t *testing.T) {
+	s := testStore(t)
+	h, _ := newHandler(t, s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	_ = s.UpsertProfilePage(context.Background(), &store.ProfilePage{ID: "p1", TenantID: u.TenantID, AccountID: u.ID, DisplayName: "Alice", Theme: "default"})
+	rec := do(h.DeleteAvatar, req(http.MethodDelete, "/me/profile/avatar", principal(u.ID, u.TenantID)))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("delete avatar no key = %d, want 204 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDeleteAvatarNoProfile verifies deleting an avatar without a profile page
+// is a 404.
+func TestDeleteAvatarNoProfile(t *testing.T) {
+	s := testStore(t)
+	h, _ := newHandler(t, s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	rec := do(h.DeleteAvatar, req(http.MethodDelete, "/me/profile/avatar", principal(u.ID, u.TenantID)))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("delete avatar no profile = %d, want 404 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUploadAvatarNoProfile verifies uploading an avatar without a profile page
+// is a 404.
+func TestUploadAvatarNoProfile(t *testing.T) {
+	s := testStore(t)
+	h, _ := newHandler(t, s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	blobBody, ct := multipartBody(t, "avatar", "me.png", "x")
+	r := httptest.NewRequest(http.MethodPut, "/me/profile/avatar", blobBody)
+	r.Header.Set("Content-Type", ct)
+	r = withPrincipal(r, principal(u.ID, u.TenantID))
+	rec := do(h.UploadAvatar, r)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("upload avatar no profile = %d, want 404 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAddLinkNoProfile verifies adding a link without a profile page is a 404.
+func TestAddLinkNoProfile(t *testing.T) {
+	s := testStore(t)
+	h, _ := newHandler(t, s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	rec := do(h.AddLink, reqBody(http.MethodPost, "/me/profile/links", principal(u.ID, u.TenantID), `{"label":"x","url":"https://x.test"}`))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("add link no profile = %d, want 404 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAddLinkInvalidBody verifies a malformed add-link body is a 400.
+func TestAddLinkInvalidBody(t *testing.T) {
+	s := testStore(t)
+	h, _ := newHandler(t, s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	_ = s.UpsertProfilePage(context.Background(), &store.ProfilePage{ID: "p1", TenantID: u.TenantID, AccountID: u.ID, DisplayName: "Alice", Theme: "default"})
+	rec := do(h.AddLink, reqBody(http.MethodPost, "/me/profile/links", principal(u.ID, u.TenantID), `{`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("add link bad body = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateLinkInvalidBody verifies a malformed update-link body is a 400.
+func TestUpdateLinkInvalidBody(t *testing.T) {
+	s := testStore(t)
+	h, _ := newHandler(t, s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	_ = s.UpsertProfilePage(context.Background(), &store.ProfilePage{ID: "p1", TenantID: u.TenantID, AccountID: u.ID, DisplayName: "Alice", Theme: "default"})
+	_ = s.AddProfileLink(context.Background(), &store.ProfileLink{ID: "l1", ProfilePageID: "p1", Position: 0, Kind: "custom", Label: "x", URL: "https://x.test"})
+	rec := do(h.UpdateLink, reqBody(http.MethodPatch, "/me/profile/links/l1", principal(u.ID, u.TenantID), `{`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("update link bad body = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateLinkValidation verifies an update that empties the label is a 422.
+func TestUpdateLinkValidation(t *testing.T) {
+	s := testStore(t)
+	h, _ := newHandler(t, s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	_ = s.UpsertProfilePage(context.Background(), &store.ProfilePage{ID: "p1", TenantID: u.TenantID, AccountID: u.ID, DisplayName: "Alice", Theme: "default"})
+	_ = s.AddProfileLink(context.Background(), &store.ProfileLink{ID: "l1", ProfilePageID: "p1", Position: 0, Kind: "custom", Label: "x", URL: "https://x.test"})
+	rec := do(h.UpdateLink, reqBody(http.MethodPatch, "/me/profile/links/l1", principal(u.ID, u.TenantID), `{"label":"  "}`))
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("update link blank label = %d, want 422 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestReorderLinksInvalidBody verifies a malformed reorder body is a 400.
+func TestReorderLinksInvalidBody(t *testing.T) {
+	s := testStore(t)
+	h, _ := newHandler(t, s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	_ = s.UpsertProfilePage(context.Background(), &store.ProfilePage{ID: "p1", TenantID: u.TenantID, AccountID: u.ID, DisplayName: "Alice", Theme: "default"})
+	rec := do(h.ReorderLinks, reqBody(http.MethodPost, "/me/profile/links:reorder", principal(u.ID, u.TenantID), `{`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("reorder bad body = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSelfUserInternalError verifies a store failure loading the user (other
+// than not-found) surfaces as a 500.
+func TestSelfUserInternalError(t *testing.T) {
+	s := testStore(t)
+	h, _ := newHandler(t, s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal("u1", "tenant-a"))
+	r := httptest.NewRequest(http.MethodGet, "/me/profile", http.NoBody).WithContext(ctx)
+	rec := do(h.Get, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("self internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestLinkIDFromPathEmpty verifies an empty path segment yields a 404.
+func TestLinkIDFromPathEmpty(t *testing.T) {
+	s := testStore(t)
+	h, _ := newHandler(t, s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	_ = s.UpsertProfilePage(context.Background(), &store.ProfilePage{ID: "p1", TenantID: u.TenantID, AccountID: u.ID, DisplayName: "Alice", Theme: "default"})
+	r := httptest.NewRequest(http.MethodDelete, "/me/profile/links/", http.NoBody)
+	r = withPrincipal(r, principal(u.ID, u.TenantID))
+	rec := do(h.DeleteLink, r)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("empty link id = %d, want 404 (body %s)", rec.Code, rec.Body.String())
+	}
+}

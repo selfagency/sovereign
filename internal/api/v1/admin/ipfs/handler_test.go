@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/selfagency/sovereign/internal/api/middleware"
@@ -140,5 +141,72 @@ func TestList(t *testing.T) {
 	rec := do(h.List, req(http.MethodGet, "/api/v1/admin/ipfs/pins", nil, adminPrincipal()))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list = %d, want 200", rec.Code)
+	}
+}
+
+// TestListEmpty verifies listing with no pins returns an empty array.
+func TestListEmpty(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	rec := do(h.List, req(http.MethodGet, "/api/v1/admin/ipfs/pins", nil, adminPrincipal()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list empty = %d, want 200", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "[]" {
+		t.Fatalf("list empty body = %q, want []", body)
+	}
+}
+
+// TestUnauthenticated verifies every handler returns 401 without a principal.
+func TestUnauthenticated(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	for name, fn := range map[string]http.HandlerFunc{
+		"list": h.List,
+		"add":  h.Add,
+		"get":  h.GetByCID,
+	} {
+		rec := do(fn, req(http.MethodGet, "/api/v1/admin/ipfs/pins", nil, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s unauthenticated = %d, want 401", name, rec.Code)
+		}
+	}
+}
+
+// TestListInternalError verifies a store failure surfaces as a 500.
+func TestListInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, adminPrincipal())
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/ipfs/pins", http.NoBody).WithContext(ctx)
+	rec := do(h.List, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("list internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAddPinStoreError verifies a store failure adding a pin surfaces as a 500.
+func TestAddPinStoreError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, adminPrincipal())
+	body, _ := json.Marshal(map[string]string{"cid": validCID})
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/admin/ipfs/pins", bytes.NewReader(body)).WithContext(ctx)
+	rec := do(h.Add, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("add store error = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestNewNilLogger verifies New defaults the logger when nil is passed.
+func TestNewNilLogger(t *testing.T) {
+	s := testStore(t)
+	h := v1ipfs.New(s, nil, nil)
+	if h == nil {
+		t.Fatal("New with nil args returned nil handler")
 	}
 }

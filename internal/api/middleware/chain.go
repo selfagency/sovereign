@@ -105,24 +105,7 @@ func NewHandler(cfg *ChainConfig) *lifecycle {
 	mux := http.NewServeMux()
 	for _, r := range cfg.Routes {
 		r := r
-		h := r.Handler
-		// Per-route middleware, innermost first so the request flows
-		// timeout -> authn -> scope -> idempotency -> access log -> handler.
-		h = func(next http.Handler) http.Handler { return AccessLog(cfg.Logger, next) }(h)
-		if r.Idempotent {
-			h = idem.Middleware(h)
-		}
-		if r.Scope != "" {
-			s := &ScopeAuthz{RequireScope: func(string) string { return r.Scope }}
-			h = s.Middleware(h)
-		}
-		if !r.Anonymous {
-			h = authn.Middleware(h)
-		}
-		if !r.LongRunning && r.Timeout > 0 {
-			h = Timeout(func(*http.Request) time.Duration { return r.Timeout })(h)
-		}
-		mux.Handle(r.Method+" "+r.Path, h)
+		mux.Handle(r.Method+" "+r.Path, wrapRoute(cfg, &r, authn, idem))
 	}
 
 	h := Chain(
@@ -137,6 +120,29 @@ func NewHandler(cfg *ChainConfig) *lifecycle {
 	)(mux)
 
 	return &lifecycle{chain: h, idem: idem}
+}
+
+// wrapRoute builds the per-route middleware chain for one route, innermost
+// first so the request flows timeout -> authn -> scope -> idempotency -> access
+// log -> handler. It is extracted from NewHandler to keep the route-registration
+// loop free of branching.
+func wrapRoute(cfg *ChainConfig, r *RouteInfo, authn *AuthN, idem *Idempotency) http.Handler {
+	h := r.Handler
+	h = func(next http.Handler) http.Handler { return AccessLog(cfg.Logger, next) }(h)
+	if r.Idempotent {
+		h = idem.Middleware(h)
+	}
+	if r.Scope != "" {
+		s := &ScopeAuthz{RequireScope: func(string) string { return r.Scope }}
+		h = s.Middleware(h)
+	}
+	if !r.Anonymous {
+		h = authn.Middleware(h)
+	}
+	if !r.LongRunning && r.Timeout > 0 {
+		h = Timeout(func(*http.Request) time.Duration { return r.Timeout })(h)
+	}
+	return h
 }
 
 // lifecycle wraps the composed handler and exposes Close so callers (server

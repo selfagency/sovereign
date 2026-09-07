@@ -394,6 +394,59 @@ func TestCrossTenantIsolation(t *testing.T) {
 	}
 }
 
+// TestNewNilLogger verifies New defaults the logger when nil is passed.
+func TestNewNilLogger(t *testing.T) {
+	s := testStore(t)
+	h := v1keys.New(s, nil)
+	if h == nil {
+		t.Fatal("New with nil logger returned nil handler")
+	}
+}
+
+// TestSelfInternalError verifies a store failure loading the user (other than
+// not-found) surfaces as a 500.
+func TestSelfInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal("u1", "tenant-a"))
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me/keys", http.NoBody).WithContext(ctx)
+	rec := do(h.List, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("self internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCreateKeyInvalidBody verifies a malformed create body is a 400.
+func TestCreateKeyInvalidBody(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	rec := do(h.Create, req(http.MethodPost, "/api/v1/me/keys", principal(u.ID, u.TenantID), `{`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create bad body = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestKeyIDFromPathEmpty verifies an empty path segment yields a 404.
+func TestKeyIDFromPathEmpty(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me/keys/", http.NoBody)
+	r = withPrincipal(r, principal(u.ID, u.TenantID))
+	rec := do(h.Get, r)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("empty key id = %d, want 404 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// withPrincipal returns a copy of the request carrying the principal in context.
+func withPrincipal(r *http.Request, p *middleware.Principal) *http.Request {
+	return r.WithContext(middleware.WithPrincipal(r.Context(), p))
+}
+
 // --- fixtures ---
 
 // loadFixture reads a test fixture file (relative to this package).

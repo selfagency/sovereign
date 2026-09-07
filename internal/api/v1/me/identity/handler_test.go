@@ -378,3 +378,123 @@ func TestCrossTenantIsolation(t *testing.T) {
 		t.Fatalf("tenant A's deletion request leaked to tenant B: %v", err)
 	}
 }
+
+// TestNewNilLogger verifies New defaults the logger when nil is passed.
+func TestNewNilLogger(t *testing.T) {
+	s := testStore(t)
+	h := v1identity.New(s, nil)
+	if h == nil {
+		t.Fatal("New with nil logger returned nil handler")
+	}
+}
+
+// TestSelfInternalError verifies a store failure loading the user (other than
+// not-found) surfaces as a 500.
+func TestSelfInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal("u1", "tenant-a"))
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me/identity", http.NoBody).WithContext(ctx)
+	rec := do(h.Get, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("self internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestOnboardingStateInternalError verifies a non-NotFound profile lookup
+// failure surfaces as a 500.
+func TestOnboardingStateInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal(u.ID, u.TenantID))
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me/identity/onboarding", http.NoBody).WithContext(ctx)
+	rec := do(h.OnboardingState, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("onboarding internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAcceptToSInternalError verifies a store failure accepting ToS surfaces
+// as a 500.
+func TestAcceptToSInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal(u.ID, u.TenantID))
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/me/identity/tos", http.NoBody).WithContext(ctx)
+	rec := do(h.AcceptToS, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("accept tos internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRequestDeletionInternalError verifies a store failure creating the
+// pending deletion surfaces as a 500.
+func TestRequestDeletionInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal(u.ID, u.TenantID))
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/me/identity/deletion", http.NoBody).WithContext(ctx)
+	rec := do(h.RequestDeletion, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("request deletion internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateIdentityInternalError verifies a store failure persisting an email
+// update surfaces as a 500.
+func TestUpdateIdentityInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal(u.ID, u.TenantID))
+	r := httptest.NewRequest(http.MethodPatch, "/api/v1/me/identity", strings.NewReader(`{"email":"a@b.c"}`)).WithContext(ctx)
+	r.Header.Set("Content-Type", "application/json")
+	rec := do(h.Update, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("update internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestUpdateIdentityInvalidBody verifies a malformed update body is a 400.
+func TestUpdateIdentityInvalidBody(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	r := req(http.MethodPatch, "/api/v1/me/identity", principal(u.ID, u.TenantID))
+	r.Body = io.NopCloser(strings.NewReader(`{`))
+	r.Header.Set("Content-Type", "application/json")
+	rec := do(h.Update, r)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("update bad body = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestExportInternalError verifies a store failure listing keys surfaces as a
+// 500 (the export handler logs and continues on profile/link errors but the
+// user load failure is fatal).
+func TestExportInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal(u.ID, u.TenantID))
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me/identity/export", http.NoBody).WithContext(ctx)
+	rec := do(h.Export, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("export internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}

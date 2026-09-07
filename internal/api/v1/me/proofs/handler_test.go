@@ -478,3 +478,80 @@ func hostIP(raw string) string {
 	host := hostFromURL(raw)
 	return strings.Trim(host, "[]")
 }
+
+// TestNewNilLogger verifies New defaults the logger and builds a default
+// verifier when both are nil.
+func TestNewNilLogger(t *testing.T) {
+	s := testStore(t)
+	h := v1proofs.New(s, nil, nil)
+	if h == nil {
+		t.Fatal("New with nil args returned nil handler")
+	}
+}
+
+// TestCreateProofInvalidBody verifies a malformed create body is a 400.
+func TestCreateProofInvalidBody(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s, nil)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	r := req(http.MethodPost, "/api/v1/me/proofs", principal(u.ID, u.TenantID))
+	r.Body = io.NopCloser(strings.NewReader(`{`))
+	r.Header.Set("Content-Type", "application/json")
+	rec := do(h.Create, r)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create bad body = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestSelfInternalError verifies a store failure loading the user (other than
+// not-found) surfaces as a 500.
+func TestSelfInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal("u1", "tenant-a"))
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me/proofs", http.NoBody).WithContext(ctx)
+	rec := do(h.List, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("self internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestVerifyUpdateStatusError verifies a store failure persisting the verify
+// result surfaces as a 500.
+func TestVerifyUpdateStatusError(t *testing.T) {
+	s := testStore(t)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	seedClaim(t, s, u, "p1")
+	v := &proofs.Verifier{Resolver: &stubTXTResolver{txts: map[string][]string{
+		"_atproto.example.com": {"did=did:plc:x"},
+	}}}
+	h := newHandler(s, v)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal(u.ID, u.TenantID))
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/me/proofs/p1/verify", http.NoBody).WithContext(ctx)
+	rec := do(h.Verify, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("verify update error = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestIDFromPathEmpty verifies an empty path segment yields a 404.
+func TestIDFromPathEmpty(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s, nil)
+	u := seedTenantUser(t, s, "tenant-a", "alice")
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me/proofs/", http.NoBody)
+	r = withPrincipal(r, principal(u.ID, u.TenantID))
+	rec := do(h.Get, r)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("empty id = %d, want 404 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// withPrincipal returns a copy of the request carrying the principal in context.
+func withPrincipal(r *http.Request, p *middleware.Principal) *http.Request {
+	return r.WithContext(middleware.WithPrincipal(r.Context(), p))
+}

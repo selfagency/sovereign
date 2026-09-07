@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -327,5 +328,147 @@ func TestRevokeSessionsNotFound(t *testing.T) {
 	rec := do(h.RevokeSessions, pathIDReq(http.MethodPost, "/api/v1/admin/users/nope/sessions:revoke", "nope", nil, adminPrincipal()))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("revoke missing = %d, want 404", rec.Code)
+	}
+}
+
+// TestUpdateUserEmailAndDisplayName verifies the email and display_name update
+// branches (the existing TestUpdateUser only exercises is_admin).
+func TestUpdateUserEmailAndDisplayName(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s, &fakeSender{})
+	seedUser(t, s, "u1", "identity", "alice", "alice@example.com", false)
+	body, _ := json.Marshal(map[string]string{"email": "new@example.com", "display_name": "Alice B"})
+	rec := do(h.Update, req(http.MethodPatch, "/api/v1/admin/users/u1", body, adminPrincipal()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	u, err := s.UserByID(context.Background(), "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if u.Email != "new@example.com" || u.DisplayName != "Alice B" {
+		t.Fatalf("update not persisted: %+v", u)
+	}
+}
+
+// TestUpdateUserInvalidBody verifies a malformed update body is a 400.
+func TestUpdateUserInvalidBody(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s, &fakeSender{})
+	seedUser(t, s, "u1", "identity", "alice", "alice@example.com", false)
+	rec := do(h.Update, req(http.MethodPatch, "/api/v1/admin/users/u1", []byte(`{`), adminPrincipal()))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad body = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCreateUserWithTenantID verifies an explicit tenant_id is honored and the
+// user is created into that tenant.
+func TestCreateUserWithTenantID(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s, &fakeSender{})
+	seedTenant(t, s, "tenant-a")
+	body, _ := json.Marshal(map[string]any{"tenant_id": "tenant-a", "handle": "bob", "email": "bob@example.com"})
+	rec := do(h.Create, req(http.MethodPost, "/api/v1/admin/users", body, adminPrincipal()))
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d, want 201 (body %s)", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		User dto.User `json:"user"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if out.User.TenantID != "tenant-a" {
+		t.Fatalf("tenant = %q, want tenant-a", out.User.TenantID)
+	}
+}
+
+// TestCreateUserInviteFailure verifies a sender failure after user creation
+// returns 500 (the user exists but the invite could not be sent).
+func TestCreateUserInviteFailure(t *testing.T) {
+	s := testStore(t)
+	seedTenant(t, s, "identity")
+	h := newHandler(s, &errSender{})
+	body, _ := json.Marshal(map[string]string{"handle": "carol", "email": "carol@example.com"})
+	rec := do(h.Create, req(http.MethodPost, "/api/v1/admin/users", body, adminPrincipal()))
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("create invite fail = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestListCredentialsWithData verifies credential DTO rendering when a user has
+// passkeys.
+func TestListCredentialsWithData(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s, &fakeSender{})
+	seedUser(t, s, "u1", "identity", "alice", "alice@example.com", false)
+	if err := s.AddWebAuthnCredential(context.Background(), &store.WebAuthnCredential{
+		ID: "c1", UserID: "u1", CredentialID: []byte("cred"), PublicKey: []byte("pk"), Data: []byte("d"),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := do(h.ListCredentials, pathIDReq(http.MethodGet, "/api/v1/admin/users/u1/credentials", "u1", nil, adminPrincipal()))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("credentials = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	var out []dto.WebAuthnCredential
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatal(err)
+	}
+	if len(out) != 1 || out[0].ID != "c1" || out[0].CredentialID == "" {
+		t.Fatalf("credentials = %+v", out)
+	}
+}
+
+// TestUnauthenticated verifies every handler returns 401 without a principal.
+func TestUnauthenticated(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s, &fakeSender{})
+	for name, fn := range map[string]http.HandlerFunc{
+		"list":   h.List,
+		"create": h.Create,
+		"get":    h.GetByID,
+		"update": h.Update,
+		"delete": h.Delete,
+		"invite": h.CreateInvite,
+		"creds":  h.ListCredentials,
+		"revoke": h.RevokeSessions,
+	} {
+		rec := do(fn, req(http.MethodGet, "/api/v1/admin/users", nil, nil))
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s unauthenticated = %d, want 401", name, rec.Code)
+		}
+	}
+}
+
+// errSender is a mail.Sender that always fails.
+type errSender struct{}
+
+func (errSender) Send(_ context.Context, _ mail.Message) error {
+	return errors.New("smtp down")
+}
+
+// TestNewNilLogger verifies New defaults the logger when nil is passed.
+func TestNewNilLogger(t *testing.T) {
+	s := testStore(t)
+	h := v1users.New(s, &fakeSender{}, "https://id.example.test", nil)
+	if h == nil {
+		t.Fatal("New with nil logger returned nil handler")
+	}
+}
+
+// TestListInternalError verifies a store failure (canceled context) surfaces as
+// a 500, exercising the writeStoreErr non-NotFound branch.
+func TestListInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s, &fakeSender{})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, adminPrincipal())
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/admin/users", http.NoBody).WithContext(ctx)
+	rec := do(h.List, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("list canceled = %d, want 500 (body %s)", rec.Code, rec.Body.String())
 	}
 }

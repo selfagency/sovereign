@@ -178,3 +178,101 @@ func TestRevokeScopedToUser(t *testing.T) {
 		t.Fatalf("revoked token should be gone, got %v", err)
 	}
 }
+
+// TestNewNilLogger verifies New defaults the logger when nil is passed.
+func TestNewNilLogger(t *testing.T) {
+	s := testStore(t)
+	h := v1tokens.New(s, nil)
+	if h == nil {
+		t.Fatal("New with nil logger returned nil handler")
+	}
+}
+
+// TestCreateInvalidBody verifies a malformed create body is a 400.
+func TestCreateInvalidBody(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	rec := do(h.Create, req(http.MethodPost, "/api/v1/me/tokens", principal("u1", []string{"keys:read"}), `{`))
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("create bad body = %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestListEmpty verifies listing with no tokens returns an empty array.
+func TestListEmpty(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	rec := do(h.List, req(http.MethodGet, "/api/v1/me/tokens", principal("u1", []string{"keys:read"}), ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list empty = %d, want 200", rec.Code)
+	}
+	if body := strings.TrimSpace(rec.Body.String()); body != "[]" {
+		t.Fatalf("list empty body = %q, want []", body)
+	}
+}
+
+// TestRevokeNotFound verifies revoking a missing family is a 404.
+func TestRevokeNotFound(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	rec := do(h.Revoke, req(http.MethodDelete, "/api/v1/me/tokens/missing", principal("u1", []string{"keys:read"}), ""))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("revoke missing = %d, want 404 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRevokeEmptyPath verifies an empty family path segment is a 404.
+func TestRevokeEmptyPath(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	rec := do(h.Revoke, req(http.MethodDelete, "/api/v1/me/tokens/", principal("u1", []string{"keys:read"}), ""))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("revoke empty path = %d, want 404 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestListInternalError verifies a store failure listing tokens surfaces as a
+// 500.
+func TestListInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal("u1", []string{"keys:read"}))
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/me/tokens", http.NoBody).WithContext(ctx)
+	rec := do(h.List, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("list internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCreateInternalError verifies a store failure creating a token surfaces
+// as a 500.
+func TestCreateInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal("u1", []string{"keys:read"}))
+	r := httptest.NewRequest(http.MethodPost, "/api/v1/me/tokens", strings.NewReader(`{"scopes":["keys:read"]}`)).WithContext(ctx)
+	r.Header.Set("Content-Type", "application/json")
+	rec := do(h.Create, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("create internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRevokeInternalError verifies a store failure revoking a family surfaces
+// as a 500.
+func TestRevokeInternalError(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(s)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	ctx = middleware.WithPrincipal(ctx, principal("u1", []string{"keys:read"}))
+	r := httptest.NewRequest(http.MethodDelete, "/api/v1/me/tokens/fam", http.NoBody).WithContext(ctx)
+	rec := do(h.Revoke, r)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("revoke internal = %d, want 500 (body %s)", rec.Code, rec.Body.String())
+	}
+}
