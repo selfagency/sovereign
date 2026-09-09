@@ -469,6 +469,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 32
                 items:
                   $ref: "#/components/schemas/ProfileLink"
         "401":

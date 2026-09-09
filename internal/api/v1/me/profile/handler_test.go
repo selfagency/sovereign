@@ -98,6 +98,14 @@ func decode[T any](t *testing.T, rec *httptest.ResponseRecorder) T {
 	return v
 }
 
+// must fails the test if err is non-nil.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 // --- profile CRUD ---
 
 func TestGetProfile(t *testing.T) {
@@ -151,12 +159,7 @@ func TestUpsertProfile(t *testing.T) {
 		t.Fatalf("put create = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
 	created := decode[dto.ProfilePage](t, rec)
-	if created.DisplayName != "Alice" || created.Bio != "hello" || created.UserID != u.ID {
-		t.Fatalf("created profile = %+v", created)
-	}
-	if created.ID == "" || created.UpdatedAt.IsZero() {
-		t.Fatalf("missing id/updated_at: %+v", created)
-	}
+	assertProfileCreated(t, &created, u.ID)
 
 	// Second PUT updates in place (same ID).
 	rec = do(h.Put, reqBody(http.MethodPut, "/me/profile", p, `{"display_name":"Alice2","bio":"bye"}`))
@@ -172,8 +175,20 @@ func TestUpsertProfile(t *testing.T) {
 	}
 
 	stored, err := s.GetProfilePage(context.Background(), u.TenantID)
-	if err != nil || stored.DisplayName != "Alice2" {
-		t.Fatalf("stored = %+v, %v", stored, err)
+	must(t, err)
+	if stored.DisplayName != "Alice2" {
+		t.Fatalf("stored = %+v", stored)
+	}
+}
+
+// assertProfileCreated checks a freshly created profile page.
+func assertProfileCreated(t *testing.T, p *dto.ProfilePage, userID string) {
+	t.Helper()
+	if p.DisplayName != "Alice" || p.Bio != "hello" || p.UserID != userID {
+		t.Fatalf("created profile = %+v", p)
+	}
+	if p.ID == "" || p.UpdatedAt.IsZero() {
+		t.Fatalf("missing id/updated_at: %+v", p)
 	}
 }
 
@@ -285,9 +300,7 @@ func TestLinkLifecycle(t *testing.T) {
 		t.Fatalf("add link = %d (body %s)", rec.Code, rec.Body.String())
 	}
 	l1 := decode[dto.ProfileLink](t, rec)
-	if l1.ID == "" || l1.Label != "Site" || l1.URL != "https://example.com" || l1.Position != 0 {
-		t.Fatalf("link1 = %+v", l1)
-	}
+	assertLink(t, &l1, "Site", "https://example.com", 0)
 
 	rec = do(h.AddLink, reqBody(http.MethodPost, "/me/profile/links", p, `{"label":"Blog","url":"https://blog.example.com"}`))
 	l2 := decode[dto.ProfileLink](t, rec)
@@ -300,17 +313,16 @@ func TestLinkLifecycle(t *testing.T) {
 		t.Fatalf("list = %d", rec.Code)
 	}
 	links := decode[[]dto.ProfileLink](t, rec)
-	if len(links) != 2 || links[0].ID != l1.ID || links[1].ID != l2.ID {
-		t.Fatalf("links = %+v", links)
-	}
+	assertLinkOrder(t, links, l1.ID, l2.ID)
 
 	rec = do(h.UpdateLink, reqBody(http.MethodPatch, "/me/profile/links/"+l2.ID, p, `{"label":"Blog2","url":"https://blog2.example.com"}`))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("patch link = %d (body %s)", rec.Code, rec.Body.String())
 	}
 	upd := decode[dto.ProfileLink](t, rec)
-	if upd.Label != "Blog2" || upd.URL != "https://blog2.example.com" || upd.ID != l2.ID {
-		t.Fatalf("updated link = %+v", upd)
+	assertLink(t, &upd, "Blog2", "https://blog2.example.com", upd.Position)
+	if upd.ID != l2.ID {
+		t.Fatalf("updated link id = %q, want %q", upd.ID, l2.ID)
 	}
 
 	rec = do(h.ReorderLinks, reqBody(http.MethodPost, "/me/profile/links:reorder", p, `{"ids":["`+l2.ID+`","`+l1.ID+`"]}`))
@@ -318,9 +330,7 @@ func TestLinkLifecycle(t *testing.T) {
 		t.Fatalf("reorder = %d (body %s)", rec.Code, rec.Body.String())
 	}
 	links = decode[[]dto.ProfileLink](t, rec)
-	if len(links) != 2 || links[0].ID != l2.ID || links[1].ID != l1.ID {
-		t.Fatalf("reordered = %+v", links)
-	}
+	assertLinkOrder(t, links, l2.ID, l1.ID)
 
 	rec = do(h.DeleteLink, req(http.MethodDelete, "/me/profile/links/"+l1.ID, p))
 	if rec.Code != http.StatusNoContent {
@@ -329,6 +339,27 @@ func TestLinkLifecycle(t *testing.T) {
 	links = decode[[]dto.ProfileLink](t, do(h.ListLinks, req(http.MethodGet, "/me/profile/links", p)))
 	if len(links) != 1 || links[0].ID != l2.ID {
 		t.Fatalf("after delete = %+v", links)
+	}
+}
+
+// assertLink checks a link's label/url/position.
+func assertLink(t *testing.T, l *dto.ProfileLink, label, url string, pos int) {
+	t.Helper()
+	if l.ID == "" || l.Label != label || l.URL != url || l.Position != pos {
+		t.Fatalf("link = %+v", l)
+	}
+}
+
+// assertLinkOrder checks a link list's ids in order.
+func assertLinkOrder(t *testing.T, links []dto.ProfileLink, ids ...string) {
+	t.Helper()
+	if len(links) != len(ids) {
+		t.Fatalf("links = %+v, want %d entries", links, len(ids))
+	}
+	for i, id := range ids {
+		if links[i].ID != id {
+			t.Fatalf("links = %+v, want order %v", links, ids)
+		}
 	}
 }
 

@@ -21,44 +21,27 @@ func TestTakedownLifecycle(t *testing.T) {
 		{ID: "td3", Resource: "did:web:carol.example", Reason: "illegal", ActedBy: "admin1", CreatedAt: now.Add(-1 * time.Minute)},
 	}
 	for _, td := range tds {
-		if err := s.CreateTakedown(ctx, td); err != nil {
-			t.Fatalf("CreateTakedown(%s): %v", td.ID, err)
-		}
+		must(t, s.CreateTakedown(ctx, td))
 	}
 
 	// List returns all three, newest first, with the total.
 	page, total, err := s.ListTakedowns(ctx, 10, 0)
-	if err != nil {
-		t.Fatalf("ListTakedowns: %v", err)
-	}
-	if total != 3 || len(page) != 3 {
-		t.Fatalf("total/len = %d/%d, want 3/3", total, len(page))
-	}
-	if page[0].ID != "td3" || page[1].ID != "td2" || page[2].ID != "td1" {
-		t.Fatalf("list order = %+v, want td3,td2,td1 (newest first)", idsOf(page))
-	}
+	must(t, err)
+	assertTakedownPage(t, page, total, 3, 3, []string{"td3", "td2", "td1"})
 
 	// Pagination.
 	page, total, err = s.ListTakedowns(ctx, 2, 0)
-	if err != nil {
-		t.Fatalf("ListTakedowns page1: %v", err)
-	}
-	if total != 3 || len(page) != 2 {
-		t.Fatalf("page1 total/len = %d/%d, want 3/2", total, len(page))
-	}
+	must(t, err)
+	assertTakedownPage(t, page, total, 3, 2, nil)
 	page, _, err = s.ListTakedowns(ctx, 2, 2)
-	if err != nil {
-		t.Fatalf("ListTakedowns page2: %v", err)
-	}
+	must(t, err)
 	if len(page) != 1 {
 		t.Fatalf("page2 len = %d, want 1", len(page))
 	}
 
 	// Get by id round-trips the RFC3339 created_at.
 	got, err := s.TakedownByID(ctx, "td2")
-	if err != nil {
-		t.Fatalf("TakedownByID: %v", err)
-	}
+	must(t, err)
 	if got.ID != "td2" || got.Resource != "did:web:bob.example" || got.Reason != "abuse" || got.ActedBy != "admin2" {
 		t.Fatalf("by id = %+v", got)
 	}
@@ -67,15 +50,25 @@ func TestTakedownLifecycle(t *testing.T) {
 	}
 
 	// Delete (lift) removes the record.
-	if err := s.DeleteTakedown(ctx, "td1"); err != nil {
-		t.Fatalf("DeleteTakedown: %v", err)
-	}
+	must(t, s.DeleteTakedown(ctx, "td1"))
 	if _, err := s.TakedownByID(ctx, "td1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("after delete = %v, want ErrNotFound", err)
 	}
 	page, total, _ = s.ListTakedowns(ctx, 10, 0)
-	if total != 2 || len(page) != 2 {
-		t.Fatalf("after delete total/len = %d/%d, want 2/2", total, len(page))
+	assertTakedownPage(t, page, total, 2, 2, nil)
+}
+
+// assertTakedownPage checks a takedown list page's total/len and, when
+// wantIDs is non-nil, the exact id order.
+func assertTakedownPage(t *testing.T, page []Takedown, total, wantTotal, wantLen int, wantIDs []string) {
+	t.Helper()
+	if total != wantTotal || len(page) != wantLen {
+		t.Fatalf("total/len = %d/%d, want %d/%d", total, len(page), wantTotal, wantLen)
+	}
+	for i, id := range wantIDs {
+		if page[i].ID != id {
+			t.Fatalf("list order = %+v, want %v (newest first)", idsOf(page), wantIDs)
+		}
 	}
 }
 

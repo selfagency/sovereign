@@ -73,6 +73,14 @@ func principal(userID, tenantID string) *middleware.Principal {
 	return &middleware.Principal{UserID: userID, TenantID: tenantID, Scopes: []string{"self"}}
 }
 
+// must fails the test if err is non-nil.
+func must(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestGetIdentity(t *testing.T) {
 	s := testStore(t)
 	h := newHandler(s)
@@ -284,38 +292,34 @@ func TestExport(t *testing.T) {
 	h := newHandler(s)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	ctx := context.Background()
-	if err := s.SetUserEmail(ctx, u.ID, "alice@example.com"); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.SetUserEmail(ctx, u.ID, "alice@example.com"))
 	// Seed profile page + link + key + proof for a populated export.
-	if err := s.UpsertProfilePage(ctx, &store.ProfilePage{
+	must(t, s.UpsertProfilePage(ctx, &store.ProfilePage{
 		ID: "page-1", TenantID: u.TenantID, AccountID: u.ID, DisplayName: "alice", Bio: "hi", IsPublished: true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AddProfileLink(ctx, &store.ProfileLink{
+	}))
+	must(t, s.AddProfileLink(ctx, &store.ProfileLink{
 		ID: "link-1", ProfilePageID: "page-1", Position: 0, Kind: "url", Label: "home", URL: "https://alice.example",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreatePublicKey(ctx, &store.PublicKey{
+	}))
+	must(t, s.CreatePublicKey(ctx, &store.PublicKey{
 		ID: "key-1", TenantID: u.TenantID, AccountID: u.ID, KeyType: "ssh", Label: "laptop", Fingerprint: "fp1", KeyMaterial: "ssh-ed25519 AAAA...",
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreateProofClaim(ctx, &store.ProofClaim{
+	}))
+	must(t, s.CreateProofClaim(ctx, &store.ProofClaim{
 		ID: "proof-1", TenantID: u.TenantID, AccountID: u.ID, AnchorType: "dns", AnchorValue: "alice.example",
 		Service: "github", ClaimLocation: "alice", ExpectedToken: "tok", Status: "verified",
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 
 	rec := do(h.Export, req(http.MethodGet, "/api/v1/me/identity/export", principal(u.ID, u.TenantID)))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("export = %d, want 200 (body %s)", rec.Code, rec.Body.String())
 	}
 	exp := decode[v1identity.Export](t, rec)
-	if exp.User.ID != u.ID || exp.User.Email != "alice@example.com" {
+	assertExport(t, &exp, u.ID)
+}
+
+// assertExport checks a populated export for the given user.
+func assertExport(t *testing.T, exp *v1identity.Export, userID string) {
+	t.Helper()
+	if exp.User.ID != userID || exp.User.Email != "alice@example.com" {
 		t.Fatalf("export user = %+v", exp.User)
 	}
 	if exp.Profile == nil || exp.Profile.Bio != "hi" {

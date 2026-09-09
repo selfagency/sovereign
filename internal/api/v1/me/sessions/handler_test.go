@@ -69,7 +69,7 @@ func req(method, path string, p *middleware.Principal) *http.Request {
 func reqCookie(method, path string, p *middleware.Principal, cookieVal string) *http.Request {
 	r := req(method, path, p)
 	if cookieVal != "" {
-		r.AddCookie(&http.Cookie{Name: "session", Value: cookieVal})
+		r.AddCookie(&http.Cookie{Name: "session", Value: cookieVal, Path: "/", Secure: true, HttpOnly: true})
 	}
 	return r
 }

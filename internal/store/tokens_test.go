@@ -13,9 +13,7 @@ func TestAPITokenCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	raw, err := GenerateAPIToken()
-	if err != nil {
-		t.Fatalf("GenerateAPIToken: %v", err)
-	}
+	must(t, err)
 	tok := &APIToken{
 		ID:        "t1",
 		UserID:    "u1",
@@ -26,38 +24,31 @@ func TestAPITokenCRUD(t *testing.T) {
 		ExpiresAt: time.Now().Add(time.Hour),
 		CreatedAt: time.Now(),
 	}
-	if err := s.CreateAPIToken(ctx, tok); err != nil {
-		t.Fatalf("CreateAPIToken: %v", err)
-	}
+	must(t, s.CreateAPIToken(ctx, tok))
 
 	// Get by hash.
 	got, err := s.GetAPIToken(ctx, tok.TokenHash)
-	if err != nil {
-		t.Fatalf("GetAPIToken: %v", err)
-	}
+	must(t, err)
 	if got.ID != "t1" || len(got.Scopes) != 2 || got.Scopes[0] != "keys:read" {
 		t.Fatalf("GetAPIToken = %+v", got)
 	}
 
 	// List (scoped to user).
 	list, err := s.ListAPITokens(ctx, "u1")
-	if err != nil || len(list) != 1 {
-		t.Fatalf("ListAPITokens = %d, %v", len(list), err)
+	must(t, err)
+	if len(list) != 1 {
+		t.Fatalf("ListAPITokens = %d", len(list))
 	}
 
 	// Touch records last_used_at.
-	if err := s.TouchAPIToken(ctx, tok.TokenHash); err != nil {
-		t.Fatalf("TouchAPIToken: %v", err)
-	}
+	must(t, s.TouchAPIToken(ctx, tok.TokenHash))
 	got, _ = s.GetAPIToken(ctx, tok.TokenHash)
 	if got.LastUsedAt == nil {
 		t.Fatal("TouchAPIToken did not set last_used_at")
 	}
 
 	// Revoke (by family, scoped to user).
-	if err := s.RevokeAPITokenFamily(ctx, "u1", "fam1"); err != nil {
-		t.Fatalf("RevokeAPITokenFamily: %v", err)
-	}
+	must(t, s.RevokeAPITokenFamily(ctx, "u1", "fam1"))
 	if _, err := s.GetAPIToken(ctx, tok.TokenHash); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("GetAPIToken after revoke = %v, want ErrNotFound", err)
 	}

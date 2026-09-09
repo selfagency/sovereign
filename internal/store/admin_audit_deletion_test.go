@@ -20,16 +20,12 @@ func TestListAuditAllPage(t *testing.T) {
 		{ID: "a3", TenantID: "t1", Actor: "admin1", Action: "deletion.reject", Target: "res3", Detail: "d3", CreatedAt: time.Now().Add(-1 * time.Minute)},
 	}
 	for _, e := range entries {
-		if err := s.AppendAudit(ctx, e); err != nil {
-			t.Fatalf("AppendAudit: %v", err)
-		}
+		must(t, s.AppendAudit(ctx, e))
 	}
 
 	// Instance-scoped: all three regardless of tenant.
 	page, total, err := s.ListAuditAllPage(ctx, 10, 0)
-	if err != nil {
-		t.Fatalf("ListAuditAllPage: %v", err)
-	}
+	must(t, err)
 	if total != 3 || len(page) != 3 {
 		t.Fatalf("total/len = %d/%d, want 3/3", total, len(page))
 	}
@@ -48,16 +44,12 @@ func TestListAuditAllPage(t *testing.T) {
 
 	// Pagination.
 	page, total, err = s.ListAuditAllPage(ctx, 2, 0)
-	if err != nil {
-		t.Fatalf("ListAuditAllPage page1: %v", err)
-	}
+	must(t, err)
 	if total != 3 || len(page) != 2 {
 		t.Fatalf("page1 total/len = %d/%d, want 3/2", total, len(page))
 	}
 	page, _, err = s.ListAuditAllPage(ctx, 2, 2)
-	if err != nil {
-		t.Fatalf("ListAuditAllPage page2: %v", err)
-	}
+	must(t, err)
 	if len(page) != 1 {
 		t.Fatalf("page2 len = %d, want 1", len(page))
 	}
@@ -79,40 +71,28 @@ func TestPendingDeletionsLifecycle(t *testing.T) {
 	seedUser(t, s, ctx, "u2", "t1", "bob")
 
 	p, err := s.CreatePendingDeletion(ctx, "u1")
-	if err != nil {
-		t.Fatalf("CreatePendingDeletion: %v", err)
-	}
+	must(t, err)
 	_, err = s.CreatePendingDeletion(ctx, "u2")
-	if err != nil {
-		t.Fatalf("CreatePendingDeletion u2: %v", err)
-	}
+	must(t, err)
 
 	// List returns both, newest first.
 	page, total, err := s.ListPendingDeletions(ctx, 10, 0)
-	if err != nil {
-		t.Fatalf("ListPendingDeletions: %v", err)
-	}
+	must(t, err)
 	if total != 2 || len(page) != 2 {
 		t.Fatalf("total/len = %d/%d, want 2/2", total, len(page))
 	}
 
 	// ByID round-trips.
 	got, err := s.PendingDeletionByID(ctx, p.ID)
-	if err != nil {
-		t.Fatalf("PendingDeletionByID: %v", err)
-	}
+	must(t, err)
 	if got.ID != p.ID || got.UserID != "u1" || got.Status != "pending" {
 		t.Fatalf("by id = %+v", got)
 	}
 
 	// Reject is a no-op leaving the account intact.
-	if err := s.RejectPendingDeletion(ctx, p.ID, "admin1"); err != nil {
-		t.Fatalf("RejectPendingDeletion: %v", err)
-	}
+	must(t, s.RejectPendingDeletion(ctx, p.ID, "admin1"))
 	got, err = s.PendingDeletionByID(ctx, p.ID)
-	if err != nil {
-		t.Fatalf("PendingDeletionByID after reject: %v", err)
-	}
+	must(t, err)
 	if got.Status != "rejected" || got.ApprovedBy == nil || *got.ApprovedBy != "admin1" {
 		t.Fatalf("rejected = %+v", got)
 	}
@@ -120,9 +100,7 @@ func TestPendingDeletionsLifecycle(t *testing.T) {
 		t.Fatalf("reject must not delete the user: %v", err)
 	}
 	// Rejecting again is idempotent (no error, no change).
-	if err := s.RejectPendingDeletion(ctx, p.ID, "admin2"); err != nil {
-		t.Fatalf("re-reject: %v", err)
-	}
+	must(t, s.RejectPendingDeletion(ctx, p.ID, "admin2"))
 }
 
 func TestApprovePendingDeletionCascadesDelete(t *testing.T) {
