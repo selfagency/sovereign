@@ -566,6 +566,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 32
                 items:
                   $ref: "#/components/schemas/ProfileLink"
         "400":
@@ -586,6 +587,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 64
                 items:
                   $ref: "#/components/schemas/PublicKey"
         "401":
@@ -694,6 +696,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 64
                 items:
                   $ref: "#/components/schemas/ProofClaim"
         "401":
@@ -802,6 +805,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 100
                 items:
                   $ref: "#/components/schemas/SessionInfo"
         "401":
@@ -851,6 +855,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 100
                 items:
                   $ref: "#/components/schemas/APIToken"
         "401":
@@ -912,6 +917,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 100
                 items:
                   $ref: "#/components/schemas/WebAuthnCredential"
         "401":
@@ -1064,6 +1070,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 100
                 items:
                   $ref: "#/components/schemas/Client"
         "401":
@@ -1357,6 +1364,7 @@ paths:
                 properties:
                   data:
                     type: array
+                    maxItems: 1000
                     items:
                       $ref: "#/components/schemas/BackupRun"
                   offset:
@@ -1448,6 +1456,7 @@ paths:
                 properties:
                   data:
                     type: array
+                    maxItems: 1000
                     items:
                       $ref: "#/components/schemas/BackupRestore"
                   offset:
@@ -1521,6 +1530,7 @@ paths:
                 properties:
                   data:
                     type: array
+                    maxItems: 1000
                     items:
                       $ref: "#/components/schemas/AuditEntry"
                   offset:
@@ -1561,6 +1571,7 @@ paths:
                 properties:
                   data:
                     type: array
+                    maxItems: 1000
                     items:
                       $ref: "#/components/schemas/PendingDeletion"
                   offset:
@@ -1653,6 +1664,7 @@ paths:
                 properties:
                   data:
                     type: array
+                    maxItems: 1000
                     items:
                       $ref: "#/components/schemas/User"
                   offset:
@@ -1830,6 +1842,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 100
                 items:
                   $ref: "#/components/schemas/WebAuthnCredential"
         "404":
@@ -1881,6 +1894,7 @@ paths:
             application/json:
               schema:
                 type: array
+                maxItems: 1000
                 items:
                   $ref: "#/components/schemas/IPFSPin"
         "401":
