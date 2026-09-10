@@ -14,22 +14,38 @@ const flash = document.getElementById("flash");
 
 // --- DOM helpers ---
 
+// setProp applies one prop to a node: class/text special cases, event
+// handlers for on* keys, and attributes otherwise.
+function setProp(node, key, value) {
+  if (key === "class") {
+    node.className = value;
+  } else if (key === "text") {
+    node.textContent = value;
+  } else if (key.startsWith("on") && typeof value === "function") {
+    node.addEventListener(key.slice(2), value);
+  } else {
+    node.setAttribute(key, value === true ? "" : String(value));
+  }
+}
+
+// appendChildren appends each non-null child: Nodes as-is, everything else as
+// a text node (never parsed as HTML).
+function appendChildren(node, children) {
+  for (const child of children.flat(Infinity)) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
+  }
+}
+
 // h builds a DOM node. Text children are appended as text nodes (never
 // parsed as HTML), which is the whole XSS defence for this file.
 function h(tag, props = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(props)) {
     if (value === null || value === undefined || value === false) continue;
-    if (key === "class") node.className = value;
-    else if (key === "text") node.textContent = value;
-    else if (key.startsWith("on") && typeof value === "function") {
-      node.addEventListener(key.slice(2), value);
-    } else node.setAttribute(key, value === true ? "" : String(value));
+    setProp(node, key, value);
   }
-  for (const child of children.flat(Infinity)) {
-    if (child === null || child === undefined || child === false) continue;
-    node.append(child instanceof Node ? child : document.createTextNode(String(child)));
-  }
+  appendChildren(node, children);
   return node;
 }
 
@@ -42,7 +58,7 @@ function section(title, ...body) {
 }
 
 function labelled(text, input) {
-  return h("label", {}, text + " ", input);
+  return h("label", {}, `${text} `, input);
 }
 
 function button(text, onclick) {
@@ -111,7 +127,7 @@ function renderPasskey() {
 
 // base64url decode/encode for the WebAuthn ceremony.
 function b64urlToBuf(value) {
-  const padded = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
+  const padded = `${value.replace(/-/g, "+").replace(/_/g, "/")}${"===".slice((value.length + 3) % 4)}`;
   const binary = atob(padded);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);

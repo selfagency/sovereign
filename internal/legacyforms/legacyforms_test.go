@@ -56,7 +56,7 @@ func newHarness(t *testing.T) *harness {
 	return &harness{
 		st:      st,
 		handler: (&middleware.CSRF{}).Middleware(NewHandler(st, key, testIssuer, testAudience)),
-		session: &http.Cookie{Name: sessionCookie, Value: tok},
+		session: &http.Cookie{Name: sessionCookie, Value: tok, Path: "/", Secure: true, HttpOnly: true},
 	}
 }
 
@@ -162,8 +162,13 @@ func TestNoJSProfileEdit(t *testing.T) {
 		t.Fatalf("profile = %q/%q, want trimmed Alice/hello world", page.DisplayName, page.Bio)
 	}
 
-	// A second GET reuses the existing __Host-csrf cookie (no rotation) and
-	// prefills the saved profile values.
+	assertProfilePrefilled(t, h, csrf)
+}
+
+// assertProfilePrefilled checks a second GET reuses the existing __Host-csrf
+// cookie (no rotation) and prefills the saved profile values.
+func assertProfilePrefilled(t *testing.T, h *harness, csrf *http.Cookie) {
+	t.Helper()
 	_, csrf2, body2 := h.getForm(t, "/panel/profile", csrf)
 	if csrf2 != nil {
 		t.Fatalf("GET /panel/profile rotated the csrf cookie: %q", csrf2.Value)
@@ -210,7 +215,7 @@ func TestNoJSUnauthenticated(t *testing.T) {
 
 	// An invalid session cookie fails closed the same way.
 	bad := httptest.NewRequest(http.MethodGet, "/panel/tos", http.NoBody)
-	bad.AddCookie(&http.Cookie{Name: sessionCookie, Value: "not-a-jwt"})
+	bad.AddCookie(&http.Cookie{Name: sessionCookie, Value: "not-a-jwt", Path: "/", Secure: true, HttpOnly: true})
 	rec = httptest.NewRecorder()
 	h.handler.ServeHTTP(rec, bad)
 	if rec.Code != http.StatusUnauthorized {

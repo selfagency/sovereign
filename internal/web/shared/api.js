@@ -39,7 +39,7 @@ export class ApiError extends Error {
 }
 
 function readCookie(name) {
-  const prefix = name + "=";
+  const prefix = `${name}=`;
   for (const part of document.cookie.split(";")) {
     const cookie = part.trim();
     if (cookie.startsWith(prefix)) {
@@ -80,7 +80,10 @@ function redirectToLogin() {
   location.assign(`/login?next=${next}`);
 }
 
-async function request(method, path, body, opts = {}) {
+// buildHeaders assembles the request headers: JSON Content-Type, the CSRF
+// header on unsafe methods, the conditional ETag on GET, and an
+// Idempotency-Key for the idempotent POST paths.
+function buildHeaders(method, path, body, opts) {
   const headers = new Headers(opts.headers);
   const isForm = body instanceof FormData;
   if (body !== undefined && body !== null && !isForm && !headers.has("Content-Type")) {
@@ -97,29 +100,20 @@ async function request(method, path, body, opts = {}) {
   if (isIdempotent(method, path) && !headers.has("Idempotency-Key")) {
     headers.set("Idempotency-Key", idempotencyKey());
   }
+  return { headers, isForm };
+}
 
-  let payload;
+// encodePayload serializes the body: FormData/string/null pass through, any
+// other value is JSON-encoded.
+function encodePayload(body, isForm) {
   if (body === undefined || body === null || isForm || typeof body === "string") {
-    payload = body;
-  } else {
-    payload = JSON.stringify(body);
+    return body;
   }
+  return JSON.stringify(body);
+}
 
-  const res = await fetch(path, {
-    method,
-    headers,
-    credentials: "same-origin",
-    body: payload,
-  });
-
-  const etag = res.headers.get("ETag");
-  if (method === "GET" && etag) etags.set(path, etag);
-  if (res.status === 304) {
-    return { status: 304, data: null, etag: etag || etags.get(path) || null };
-  }
-
-  const data = await readPayload(res);
-  const problem = isProblem(res.headers.get("content-type")) ? data : null;
+// throwOnError maps a non-2xx response to an ApiError. 401 redirects to login.
+function throwOnError(res, data, problem) {
   if (res.status === 401) {
     redirectToLogin();
     throw new ApiError(401, problem, data);
@@ -133,6 +127,26 @@ async function request(method, path, body, opts = {}) {
   if (!res.ok) {
     throw new ApiError(res.status, problem, data);
   }
+}
+
+async function request(method, path, body, opts = {}) {
+  const { headers, isForm } = buildHeaders(method, path, body, opts);
+  const res = await fetch(path, {
+    method,
+    headers,
+    credentials: "same-origin",
+    body: encodePayload(body, isForm),
+  });
+
+  const etag = res.headers.get("ETag");
+  if (method === "GET" && etag) etags.set(path, etag);
+  if (res.status === 304) {
+    return { status: 304, data: null, etag: etag || etags.get(path) || null };
+  }
+
+  const data = await readPayload(res);
+  const problem = isProblem(res.headers.get("content-type")) ? data : null;
+  throwOnError(res, data, problem);
   return { status: res.status, data, etag: etag || null };
 }
 
