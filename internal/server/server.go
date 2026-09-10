@@ -16,8 +16,12 @@ import (
 	"github.com/selfagency/sovereign/internal/api"
 	"github.com/selfagency/sovereign/internal/api/dto"
 	"github.com/selfagency/sovereign/internal/api/middleware"
+	v1admin "github.com/selfagency/sovereign/internal/api/v1/admin"
+	"github.com/selfagency/sovereign/internal/api/v1/admin/capabilities"
+	v1system "github.com/selfagency/sovereign/internal/api/v1/admin/system"
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
+	"github.com/selfagency/sovereign/internal/api/v1/self"
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/endpoints"
 	"github.com/selfagency/sovereign/internal/mail"
@@ -40,14 +44,15 @@ import (
 
 // Server is the assembled identity server.
 type Server struct {
-	cfg       *Config
-	version   string
-	store     *store.Store
-	authStore *auth.SQLStore
-	blobs     storage.Backend
-	mailer    mail.Sender
-	mux       http.Handler
-	logger    *slog.Logger
+	cfg         *Config
+	version     string
+	store       *store.Store
+	authStore   *auth.SQLStore
+	blobs       storage.Backend
+	mailer      mail.Sender
+	ipfsBackend ipfspin.Backend
+	mux         http.Handler
+	logger      *slog.Logger
 	// apiClose stops the control-plane middleware chain's background goroutines
 	// (idempotency pruner) on Close.
 	apiClose func()
@@ -243,6 +248,7 @@ func (s *Server) buildRouter() error {
 	if s.cfg.IPFS.Enabled {
 		ipfsBackend = ipfspin.NewKuboRPC("http://127.0.0.1:5001")
 	}
+	s.ipfsBackend = ipfsBackend
 	ipfsBroker := newIPFSBroker(s.store, ipfsBackend)
 
 	// atproto PDS.
@@ -357,30 +363,49 @@ func (h hostRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // config from the server config. The returned lifecycle is stored so Close
 // stops its background goroutines.
 func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, error) {
-	// The honest wired-feature list: authn/identity plumbing is live; data-plane
-	// features stay false until their wiring lands in Phase 3/4.
-	capabilities := dto.Capabilities{
-		Backup:   false,
-		Atproto:  false,
-		Solid:    false,
-		IPFS:     false,
-		Proofs:   false,
-		WebAuthn: true,
-		OIDC:     true,
-	}
+	// Derive the wired-feature set from actual wiring (config + store), not a
+	// static list. This is the source of truth for NodeInfo and the README
+	// status table (Phase 4).
+	capProvider := capabilities.New(capabilities.Config{
+		IPFSEnabled: s.cfg.IPFS.Enabled,
+		SMTPEnabled: s.cfg.SMTP.Enabled(),
+	}, s.store)
 
 	// /ready pings the SQLite store; unreachable store fails closed with 503.
 	ping := func(ctx context.Context) error { return s.store.DB().PingContext(ctx) }
 
 	h := meta.New(
-		meta.WithCapabilities(capabilities),
+		meta.WithCapabilitiesProvider(func() map[string]dto.Capability {
+			return capProvider.Features()
+		}),
 		meta.WithVersion(meta.VersionInfo{Version: s.version}),
 		meta.WithPing(ping),
 	)
 
 	ah := v1auth.New(s.store, s.authStore.SigningKeyMaterial(), "https://id."+s.cfg.Domain, waHandler, s.logger)
 
-	routes := api.ToRouteInfo(api.RoutesForAPI(h, ah))
+	// Self handler for the /me/* self-service routes. blobs is the shared
+	// storage backend (profile avatars); verifier is nil so the proofs
+	// sub-handler builds its own strict SSRF-safe default.
+	sh := self.New(s.store, s.blobs, nil, s.logger)
+
+	// Admin handler for the /admin/* instance-admin routes. The ipfsBackend
+	// and s.mailer are resolved earlier in New; pass them through so the
+	// admin users (invite email) and IPFS handlers work.
+	adm := v1admin.New(s.store, s.logger, nil, nil, s.blobs, capProvider, &v1system.Info{
+		Domain:            s.cfg.Domain,
+		Audience:          s.cfg.Audience,
+		DataDir:           s.cfg.DataDir,
+		OpenRegistrations: s.cfg.OpenRegistrations,
+		StorageBackend:    s.cfg.Storage.Backend,
+		IPFSEnabled:       s.cfg.IPFS.Enabled,
+		SMTPEnabled:       s.cfg.SMTP.Enabled(),
+		SMTPHost:          s.cfg.SMTP.Host,
+		SMTPFrom:          s.cfg.SMTP.From,
+		APICORSOrigins:    s.cfg.API.CORSOrigins,
+	}, s.mailer, "https://id."+s.cfg.Domain, s.ipfsBackend)
+
+	routes := api.ToRouteInfo(api.RoutesForAdmin(h, ah, sh, adm))
 	life := middleware.NewHandler(&middleware.ChainConfig{
 		Routes:        routes,
 		Logger:        s.logger,

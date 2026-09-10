@@ -117,8 +117,29 @@ var _ solid.ACLChecker = (*ACLChecker)(nil)
 // Exact matching only - the implication table is the sole source of
 // hierarchical relationships. No prefix logic.
 var scopeImplies = map[string][]string{
-	// Add implications only when the API taxonomy needs them, e.g.
-	// "profile:write": {"profile:read"}.
+	// Coarse admin scopes (granted to cookie/browser admin principals from the
+	// user record) imply their granular read/write variants declared on the
+	// admin routes. Without these, a cookie admin holding only the coarse
+	// scope is 403 on every granular admin route.
+	"admin:tenants":    {"admin:tenants:read", "admin:tenants:write"},
+	"admin:users":      {"admin:users:read", "admin:users:write"},
+	"admin:clients":    {"admin:clients:read", "admin:clients:write"},
+	"admin:backup":     {"admin:backup:read", "admin:backup:write"},
+	"admin:moderation": {"admin:moderation:read", "admin:moderation:write"},
+	"admin:audit":      {"admin:audit:read"},
+	"admin:ipfs":       {"admin:ipfs:read", "admin:ipfs:write"},
+	"admin:system":     {"admin:system:read", "admin:system:write"},
+	// Coarse self-service scopes (granted to cookie principals) imply their
+	// granular variants declared on the /me/* routes.
+	"self":        {"self:read", "self:write"},
+	"profile":     {"profile:read", "profile:write", "profile:publish"},
+	"keys":        {"keys:read", "keys:write"},
+	"proofs":      {"proofs:read", "proofs:write", "proofs:verify"},
+	"sessions":    {"sessions:read", "sessions:revoke"},
+	"tokens":      {"tokens:read", "tokens:write", "tokens:revoke"},
+	"credentials": {"credentials:read", "credentials:write"},
+	"export":      {"export:read"},
+	"account":     {"account:delete"},
 }
 
 // ScopesContains reports whether scopes contains want, either by exact match

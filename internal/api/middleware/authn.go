@@ -21,7 +21,7 @@ const (
 // selfScopes are the coarse self-service scopes granted to a cookie (browser)
 // principal. Session rows carry no scopes, so a cookie principal is granted
 // this baseline; admin routes additionally require IsAdmin.
-var selfScopes = []string{"self", "profile", "keys", "proofs", "sessions", "tokens", "export", "account"}
+var selfScopes = []string{"self", "profile", "keys", "proofs", "sessions", "tokens", "credentials", "export", "account"}
 
 // adminScopes are the coarse admin scopes granted to a cookie principal whose
 // user record has IsAdmin=true. They mirror the admin:* coarse scopes the

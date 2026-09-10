@@ -15,6 +15,7 @@ import "time"
 type User struct {
 	ID          string    `json:"id"`
 	TenantID    string    `json:"tenant_id"`
+	Handle      string    `json:"handle"`
 	Email       string    `json:"email"`
 	DisplayName string    `json:"display_name"`
 	IsAdmin     bool      `json:"is_admin"`
@@ -40,8 +41,8 @@ type Session struct {
 	LastSeenAt    *time.Time `json:"last_seen_at"`
 	ExpiresAt     time.Time  `json:"expires_at"`
 	RevokedAt     *time.Time `json:"revoked_at"`
-	UserAgentHash string     `json:"user_agent_hash"`
-	IPHash        string     `json:"ip_hash"`
+	UserAgentHash string     `json:"user_agent_hash,omitempty"`
+	IPHash        string     `json:"ip_hash,omitempty"`
 }
 
 // Principal is the authenticated identity returned by GET /auth/session. It
@@ -136,6 +137,18 @@ type BackupRun struct {
 	DestinationKey string     `json:"destination_key"`
 }
 
+// BackupRestore is a single restore execution. FinishedAt and Error are null
+// while the restore is in progress or succeeded.
+type BackupRestore struct {
+	ID          string     `json:"id"`
+	StartedAt   time.Time  `json:"started_at"`
+	FinishedAt  *time.Time `json:"finished_at"`
+	Status      string     `json:"status"`
+	Error       *string    `json:"error"`
+	SourceKey   string     `json:"source_key"`
+	RequestedBy string     `json:"requested_by"`
+}
+
 // Takedown is a moderation takedown action against a resource.
 type Takedown struct {
 	ID        string    `json:"id"`
@@ -162,6 +175,21 @@ type ToSDocument struct {
 	Content     string    `json:"content"`
 	PublishedAt time.Time `json:"published_at"`
 	PublishedBy string    `json:"published_by"`
+}
+
+// IPFSPin is a CID pinned to the instance IPFS broker.
+type IPFSPin struct {
+	CID       string    `json:"cid"`
+	Status    string    `json:"status"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// Capability describes one wired feature: whether it is actually wired and a
+// short human-readable description. The /meta/capabilities endpoint returns a
+// map of these keyed by feature name, derived from actual wiring.
+type Capability struct {
+	Wired       bool   `json:"wired"`
+	Description string `json:"description"`
 }
 
 // Capabilities reports which protocol features are actually wired up.
@@ -212,4 +240,35 @@ type List[T any] struct {
 type CursorList[T any] struct {
 	Data       []T     `json:"data"`
 	NextCursor *string `json:"next_cursor"`
+}
+
+// APIToken is a programmatic API token. TokenHash and LastUsedAt are only
+// present on list responses; the raw token is show-once at creation and never
+// included here.
+type APIToken struct {
+	ID         string     `json:"id"`
+	FamilyID   string     `json:"family_id"`
+	Name       string     `json:"name,omitempty"`
+	Scopes     []string   `json:"scopes"`
+	ExpiresAt  *time.Time `json:"expires_at"`
+	LastUsedAt *time.Time `json:"last_used_at"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// APITokenCreateResponse is the create-token response. Token carries the raw
+// token, returned exactly once (show-once); it is never re-readable or stored
+// in plaintext.
+type APITokenCreateResponse struct {
+	APIToken
+	Token string `json:"token"`
+}
+
+// WebAuthnCredential is a passkey registered for the principal. Public key
+// material is exposed (it is public), but the full go-webauthn credential Data
+// is never served.
+type WebAuthnCredential struct {
+	ID           string     `json:"id"`
+	CredentialID string     `json:"credential_id"`
+	CreatedAt    time.Time  `json:"created_at"`
+	LastUsedAt   *time.Time `json:"last_used_at"`
 }

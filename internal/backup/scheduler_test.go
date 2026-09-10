@@ -13,6 +13,59 @@ import (
 	"github.com/selfagency/sovereign/internal/storage"
 )
 
+// TestRunNow verifies the manual-trigger path runs a backup synchronously and
+// returns the destination key and error, recording the attempt in Status().
+func TestRunNow(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	s := NewScheduler(Config{
+		Destination: &FSDestination{Backend: fs, Prefix: "backups"},
+	}, func(ctx context.Context) (io.Reader, error) {
+		return strings.NewReader("data"), nil
+	})
+
+	key, _, err := s.RunNow(context.Background())
+	if err != nil {
+		t.Fatalf("RunNow: %v", err)
+	}
+	if !strings.HasPrefix(key, "backups/backup-") {
+		t.Fatalf("key = %q, want backups/backup- prefix", key)
+	}
+	lastRun, lastErr := s.Status()
+	if lastRun.IsZero() {
+		t.Fatal("LastRun not set")
+	}
+	if lastErr != "" {
+		t.Fatalf("LastError = %q, want cleared", lastErr)
+	}
+}
+
+// TestRunNowError verifies RunNow surfaces a BackupFn error.
+func TestRunNowError(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	s := NewScheduler(Config{
+		Destination: &FSDestination{Backend: fs, Prefix: "backups"},
+	}, func(ctx context.Context) (io.Reader, error) {
+		return nil, errors.New("disk full")
+	})
+
+	if _, _, err := s.RunNow(context.Background()); err == nil {
+		t.Fatal("expected error from RunNow")
+	}
+	_, lastErr := s.Status()
+	if !strings.Contains(lastErr, "disk full") {
+		t.Fatalf("LastError = %q, want disk full", lastErr)
+	}
+}
+
+// TestRunNowNilBackupFn verifies RunNow errors when no BackupFn is set.
+func TestRunNowNilBackupFn(t *testing.T) {
+	fs := &storage.FS{Root: t.TempDir()}
+	s := NewScheduler(Config{Destination: &FSDestination{Backend: fs, Prefix: "backups"}}, nil)
+	if _, _, err := s.RunNow(context.Background()); err == nil {
+		t.Fatal("expected error for nil BackupFn")
+	}
+}
+
 // TestSchedulerStart verifies a valid schedule starts and runs a backup.
 func TestSchedulerStart(t *testing.T) {
 	fs := &storage.FS{Root: t.TempDir()}

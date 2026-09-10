@@ -95,6 +95,35 @@ func (s *Store) GetTenantByDID(ctx context.Context, did string) (*Tenant, error)
 	return &t, err
 }
 
+// ListAllUsersPage returns a page of users across ALL tenants (instance-
+// scoped, ordered by creation) plus the total count. The admin users endpoint
+// uses this so an instance admin can manage every tenant's users.
+func (s *Store) ListAllUsersPage(ctx context.Context, limit, offset int) ([]User, int, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("store: list all users page: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, handle, display_name, email, is_admin, tos_accepted, passkey_setup, created_at
+		 FROM users ORDER BY created_at LIMIT ? OFFSET ?`, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("store: list all users page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []User
+	for rows.Next() {
+		var u User
+		if err := rows.Scan(&u.ID, &u.TenantID, &u.Handle, &u.DisplayName, &u.Email, &u.IsAdmin, &u.ToSAccepted, &u.PasskeySetup, &u.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, u)
+	}
+	return out, total, rows.Err()
+}
+
 // ListUsersPage returns a page of users for a tenant plus the total count.
 func (s *Store) ListUsersPage(ctx context.Context, tenantID string, limit, offset int) ([]User, int, error) {
 	if limit <= 0 {
@@ -138,6 +167,36 @@ func (s *Store) ListAuditPage(ctx context.Context, tenantID string, limit, offse
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, tenant_id, actor, action, target, detail, created_at
 		 FROM audit_log WHERE tenant_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`, tenantID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("store: list audit page: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []AuditEntry
+	for rows.Next() {
+		var e AuditEntry
+		if err := rows.Scan(&e.ID, &e.TenantID, &e.Actor, &e.Action, &e.Target, &e.Detail, &e.CreatedAt); err != nil {
+			return nil, 0, err
+		}
+		out = append(out, e)
+	}
+	return out, total, rows.Err()
+}
+
+// ListAuditAllPage returns a page of audit entries across ALL tenants
+// (instance-scoped, newest first) plus the total count. The admin audit
+// endpoint uses this instead of ListAuditPage so an instance admin can see
+// the whole log, not just one tenant's.
+func (s *Store) ListAuditAllPage(ctx context.Context, limit, offset int) ([]AuditEntry, int, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var total int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log`).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("store: list audit page: %w", err)
+	}
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, tenant_id, actor, action, target, detail, created_at
+		 FROM audit_log ORDER BY created_at DESC LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("store: list audit page: %w", err)
 	}

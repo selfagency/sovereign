@@ -239,6 +239,1790 @@ paths:
           $ref: "#/components/responses/Problem"
         "409":
           $ref: "#/components/responses/Problem"
+  /me:
+    get:
+      operationId: getSelf
+      summary: Current principal identity
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Current identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Problem"
+    patch:
+      operationId: updateSelf
+      summary: Update current principal identity
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateSelfRequest"
+      responses:
+        "200":
+          description: Updated identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: requestDeletion
+      summary: Request account deletion (admin approval follows)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "202":
+          description: Deletion requested and pending admin approval
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/onboarding:
+    get:
+      operationId: getOnboardingState
+      summary: Current onboarding state
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Onboarding state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingState"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/tos:
+    post:
+      operationId: acceptToS
+      summary: Accept the Terms of Service
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: ToS acceptance recorded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OnboardingState"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/export:
+    get:
+      operationId: exportSelf
+      summary: Export the current principal's data
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Full user data set
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportData"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile:
+    get:
+      operationId: getSelfProfile
+      summary: Get the current principal's profile page
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Profile page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePage"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: upsertSelfProfile
+      summary: Create or fully replace the profile page
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileUpsertRequest"
+      responses:
+        "200":
+          description: Upserted profile page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePage"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteSelfProfile
+      summary: Delete the profile page (cascades to its links)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "204":
+          description: Profile deleted
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile:publish:
+    post:
+      operationId: publishSelfProfile
+      summary: Publish the profile page
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Published profile page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePage"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile:unpublish:
+    post:
+      operationId: unpublishSelfProfile
+      summary: Unpublish the profile page
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Unpublished profile page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePage"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile/avatar:
+    put:
+      operationId: uploadSelfAvatar
+      summary: Upload the profile avatar image
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                avatar:
+                  type: string
+                  format: binary
+      responses:
+        "200":
+          description: Avatar URL
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AvatarResponse"
+        "413":
+          $ref: "#/components/responses/Problem"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile/links:
+    get:
+      operationId: listSelfProfileLinks
+      summary: List profile links in display order
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Ordered profile links
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 32
+                items:
+                  $ref: "#/components/schemas/ProfileLink"
+        "401":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: addSelfProfileLink
+      summary: Add a profile link
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkWriteRequest"
+      responses:
+        "201":
+          description: Created profile link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileLink"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile/links/{id}:
+    patch:
+      operationId: updateSelfProfileLink
+      summary: Update a profile link
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkWriteRequest"
+      responses:
+        "200":
+          description: Updated profile link
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileLink"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteSelfProfileLink
+      summary: Delete a profile link
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Profile link deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/profile/links:reorder:
+    post:
+      operationId: reorderSelfProfileLinks
+      summary: Reorder profile links
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LinkReorderRequest"
+      responses:
+        "200":
+          description: Reordered profile links
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 32
+                items:
+                  $ref: "#/components/schemas/ProfileLink"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/keys:
+    get:
+      operationId: listSelfKeys
+      summary: List the current principal's public keys
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Public keys
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 64
+                items:
+                  $ref: "#/components/schemas/PublicKey"
+        "401":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createSelfKey
+      summary: Register a public key
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PublicKeyCreateRequest"
+      responses:
+        "201":
+          description: Created public key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicKey"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/keys/{id}:
+    get:
+      operationId: getSelfKey
+      summary: Get a single public key
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Public key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicKey"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteSelfKey
+      summary: Delete a public key
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Public key deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/keys/{id}/revoke:
+    post:
+      operationId: revokeSelfKey
+      summary: Revoke a public key
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Revoked public key
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PublicKey"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/proofs:
+    get:
+      operationId: listSelfProofs
+      summary: List the current principal's proof claims
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Proof claims
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 64
+                items:
+                  $ref: "#/components/schemas/ProofClaim"
+        "401":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createSelfProof
+      summary: Create a proof claim
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProofCreateRequest"
+      responses:
+        "201":
+          description: Created proof claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProofClaim"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/proofs/{id}:
+    get:
+      operationId: getSelfProof
+      summary: Get a single proof claim
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Proof claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProofClaim"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: deleteSelfProof
+      summary: Delete a proof claim
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Proof claim deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/proofs/{id}/verify:
+    post:
+      operationId: verifySelfProof
+      summary: Verify a proof claim
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Verified proof claim
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProofClaim"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/sessions:
+    get:
+      operationId: listSelfSessions
+      summary: List the current principal's sessions
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Active sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: "#/components/schemas/SessionInfo"
+        "401":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: revokeAllSelfSessions
+      summary: Revoke all of the current principal's sessions
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "204":
+          description: All sessions revoked
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/sessions/{id}:
+    delete:
+      operationId: revokeSelfSession
+      summary: Revoke one session
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Session revoked
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/tokens:
+    get:
+      operationId: listSelfTokens
+      summary: List the current principal's programmatic API tokens (metadata only)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Programmatic tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: "#/components/schemas/APIToken"
+        "401":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: createSelfToken
+      summary: "Create a programmatic API token (show-once: the raw token is returned exactly once)"
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/APITokenCreateRequest"
+      responses:
+        "201":
+          description: Created token with the raw value (show-once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/APITokenCreateResponse"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/tokens/{family_id}:
+    delete:
+      operationId: revokeSelfToken
+      summary: Revoke a programmatic API token family
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: family_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Token revoked
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/credentials:
+    get:
+      operationId: listSelfCredentials
+      summary: List the current principal's WebAuthn credentials
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: WebAuthn credentials
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: "#/components/schemas/WebAuthnCredential"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /me/credentials/{id}:
+    delete:
+      operationId: deleteSelfCredential
+      summary: Delete one WebAuthn credential (409 when it is the last passkey)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Credential deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+  /admin/tenants:
+    get:
+      operationId: adminListTenants
+      summary: List all tenants (instance admin, scope admin:tenants:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged tenants
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    maxItems: 1000
+                    items:
+                      $ref: "#/components/schemas/Tenant"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminCreateTenant
+      summary: Create a tenant (instance admin, scope admin:tenants:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTenantRequest"
+      responses:
+        "201":
+          description: Tenant created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/tenants/{id}:
+    get:
+      operationId: adminGetTenant
+      summary: Get a tenant by ID (instance admin, scope admin:tenants:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Tenant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Tenant"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: adminDeleteTenant
+      summary: Delete a tenant (instance admin, scope admin:tenants:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Tenant deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/clients:
+    get:
+      operationId: adminListClients
+      summary: List OIDC clients (instance admin, scope admin:clients:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: OIDC clients
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: "#/components/schemas/Client"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminCreateClient
+      summary: Create an OIDC client (instance admin, scope admin:clients:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateClientRequest"
+      responses:
+        "201":
+          description: Client created (secret show-once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientWithSecret"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+  /admin/clients/{id}:
+    get:
+      operationId: adminGetClient
+      summary: Get an OIDC client by ID (instance admin, scope admin:clients:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Client
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Client"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: adminDeleteClient
+      summary: Delete an OIDC client (instance admin, scope admin:clients:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Client deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/clients/{id}/secret/rotate:
+    post:
+      operationId: adminRotateClientSecret
+      summary: Rotate an OIDC client secret (show-once, scope admin:clients:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Rotated secret (show-once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ClientSecret"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/moderation/takedowns:
+    get:
+      operationId: adminListTakedowns
+      summary: List moderation takedowns (instance admin, scope admin:moderation:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged takedowns
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    maxItems: 1000
+                    items:
+                      $ref: "#/components/schemas/Takedown"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminCreateTakedown
+      summary: Create a moderation takedown (instance admin, scope admin:moderation:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTakedownRequest"
+      responses:
+        "201":
+          description: Takedown created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Takedown"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/moderation/takedowns/{id}:
+    get:
+      operationId: adminGetTakedown
+      summary: Get a takedown by ID (instance admin, scope admin:moderation:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Takedown
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Takedown"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: adminDeleteTakedown
+      summary: Delete (lift) a takedown (instance admin, scope admin:moderation:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Takedown lifted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/backup/config:
+    get:
+      operationId: adminGetBackupConfig
+      summary: Get backup config (instance admin, scope admin:backup:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Backup config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupConfig"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: adminPutBackupConfig
+      summary: Update backup config (instance admin, scope admin:backup:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackupConfig"
+      responses:
+        "200":
+          description: Updated backup config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupConfig"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /admin/backup/runs:
+    get:
+      operationId: adminListBackupRuns
+      summary: List backup runs (instance admin, scope admin:backup:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged backup runs
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    maxItems: 1000
+                    items:
+                      $ref: "#/components/schemas/BackupRun"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminTriggerBackupRun
+      summary: Trigger a backup run (instance admin, scope admin:backup:write, long-running, idempotent)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Backup run created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupRun"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/backup/runs/{id}:
+    get:
+      operationId: adminGetBackupRun
+      summary: Get a backup run by ID (instance admin, scope admin:backup:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Backup run
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupRun"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/backup/restores:
+    get:
+      operationId: adminListBackupRestores
+      summary: List backup restores (instance admin, scope admin:backup:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged backup restores
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    maxItems: 1000
+                    items:
+                      $ref: "#/components/schemas/BackupRestore"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminTriggerBackupRestore
+      summary: Trigger a backup restore (instance admin, scope admin:backup:write, long-running, idempotent)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RestoreRequest"
+      responses:
+        "201":
+          description: Backup restore created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BackupRestore"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+  /admin/audit:
+    get:
+      operationId: adminListAudit
+      summary: List instance audit log (instance admin, scope admin:audit:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged audit entries
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    maxItems: 1000
+                    items:
+                      $ref: "#/components/schemas/AuditEntry"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/deletion-requests:
+    get:
+      operationId: adminListDeletionRequests
+      summary: List pending deletion requests (instance admin, scope admin:users:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged deletion requests
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    maxItems: 1000
+                    items:
+                      $ref: "#/components/schemas/PendingDeletion"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/deletion-requests/{id}/approve:
+    post:
+      operationId: adminApproveDeletionRequest
+      summary: Approve and cascade-delete (instance admin, scope admin:users:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deletion request approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingDeletion"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/deletion-requests/{id}/reject:
+    post:
+      operationId: adminRejectDeletionRequest
+      summary: Reject a deletion request (no-op, scope admin:users:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deletion request rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PendingDeletion"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/users:
+    get:
+      operationId: adminListUsers
+      summary: List all users across tenants (instance admin, scope admin:users:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Paged users
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    maxItems: 1000
+                    items:
+                      $ref: "#/components/schemas/User"
+                  offset:
+                    type: integer
+                  limit:
+                    type: integer
+                  total:
+                    type: integer
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminCreateUser
+      summary: Create a user and send an invite (instance admin, scope admin:users:write, idempotent)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserRequest"
+      responses:
+        "201":
+          description: User created and invited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "409":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/users/{id}:
+    get:
+      operationId: adminGetUser
+      summary: Get a user by id (instance admin, scope admin:users:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    patch:
+      operationId: adminUpdateUser
+      summary: Update a user (admin, scope admin:users:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserRequest"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    delete:
+      operationId: adminDeleteUser
+      summary: Delete a user and all data (scope admin:users:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: User deleted
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/users/{id}/invites:
+    post:
+      operationId: adminCreateUserInvite
+      summary: Create and send an invite for a user (scope admin:users:write, idempotent)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        "201":
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  user_id:
+                    type: string
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/users/{id}/credentials:
+    get:
+      operationId: adminListUserCredentials
+      summary: List a user's WebAuthn credentials (scope admin:users:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of passkeys
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 100
+                items:
+                  $ref: "#/components/schemas/WebAuthnCredential"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/users/{id}/sessions:revoke:
+    post:
+      operationId: adminRevokeUserSessions
+      summary: Revoke all sessions for a user (scope admin:users:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Sessions revoked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked:
+                    type: boolean
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/ipfs/pins:
+    get:
+      operationId: adminListIPFSPins
+      summary: List pinned CIDs (instance admin, scope admin:ipfs:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: List of pins
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 1000
+                items:
+                  $ref: "#/components/schemas/IPFSPin"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    post:
+      operationId: adminAddIPFSPin
+      summary: Add a pin by CID (scope admin:ipfs:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddPinRequest"
+      responses:
+        "200":
+          description: Pin added
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSPin"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/ipfs/pins/{cid}:
+    get:
+      operationId: adminGetIPFSPin
+      summary: Get pin status by CID (scope admin:ipfs:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      parameters:
+        - name: cid
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Pin status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IPFSPin"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/tos:
+    get:
+      operationId: adminGetToS
+      summary: Get the latest Terms of Service (scope admin:system:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Latest ToS document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToSDocument"
+        "404":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+    put:
+      operationId: adminPutToS
+      summary: Publish a new Terms of Service version (scope admin:system:write)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PutToSRequest"
+      responses:
+        "201":
+          description: ToS published
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ToSDocument"
+        "400":
+          $ref: "#/components/responses/Problem"
+        "422":
+          $ref: "#/components/responses/Problem"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
+  /admin/system/info:
+    get:
+      operationId: adminSystemInfo
+      summary: Server config summary with secrets redacted (instance admin, scope admin:system:read)
+      security:
+        - bearerAuth: []
+        - cookieAuth: []
+      responses:
+        "200":
+          description: Config summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SystemInfo"
+        "401":
+          $ref: "#/components/responses/Problem"
+        "403":
+          $ref: "#/components/responses/Problem"
 components:
   securitySchemes:
     bearerAuth:
@@ -352,3 +2136,509 @@ components:
     WebAuthnResult:
       type: object
       additionalProperties: true
+    UpdateSelfRequest:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+          maxLength: 100
+    OnboardingState:
+      type: object
+      required: [tos_accepted, has_passkey, has_profile, complete]
+      properties:
+        tos_accepted:
+          type: boolean
+        has_passkey:
+          type: boolean
+        has_profile:
+          type: boolean
+        complete:
+          type: boolean
+    ExportData:
+      type: object
+      required: [user, links, keys, proofs]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        profile:
+          $ref: "#/components/schemas/ProfilePage"
+        links:
+          type: array
+          maxItems: 32
+          items:
+            $ref: "#/components/schemas/ProfileLink"
+        keys:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/PublicKey"
+        proofs:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/ProofClaim"
+    ProfilePage:
+      type: object
+      properties:
+        id:
+          type: string
+        display_name:
+          type: string
+        bio:
+          type: string
+        is_published:
+          type: boolean
+        avatar_url:
+          type: string
+          format: uri
+        theme:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ProfileUpsertRequest:
+      type: object
+      properties:
+        display_name:
+          type: string
+          maxLength: 100
+        bio:
+          type: string
+        is_published:
+          type: boolean
+    ProfileLink:
+      type: object
+      required: [id, label, url]
+      properties:
+        id:
+          type: string
+        label:
+          type: string
+        url:
+          type: string
+          format: uri
+        position:
+          type: integer
+    LinkWriteRequest:
+      type: object
+      required: [label, url]
+      properties:
+        label:
+          type: string
+        url:
+          type: string
+          format: uri
+    LinkReorderRequest:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          maxItems: 32
+          items:
+            type: string
+    PublicKey:
+      type: object
+      required: [id, key]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        key:
+          type: string
+        comment:
+          type: string
+        fingerprint:
+          type: string
+        revoked:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+    PublicKeyCreateRequest:
+      type: object
+      required: [key]
+      properties:
+        key:
+          type: string
+        comment:
+          type: string
+    ProofClaim:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+        value:
+          type: string
+        status:
+          type: string
+        verified:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ProofCreateRequest:
+      type: object
+      required: [type, value]
+      properties:
+        type:
+          type: string
+        value:
+          type: string
+    AvatarResponse:
+      type: object
+      required: [avatar_url]
+      properties:
+        avatar_url:
+          type: string
+          format: uri
+    SessionInfo:
+      type: object
+      properties:
+        id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+
+    APIToken:
+      type: object
+      description: A programmatic API token (metadata only; the raw token is show-once and never re-served)
+      properties:
+        id:
+          type: string
+        family_id:
+          type: string
+        name:
+          type: string
+        scopes:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+        expires_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        created_at:
+          type: string
+          format: date-time
+    APITokenCreateRequest:
+      type: object
+      required: [scopes]
+      properties:
+        scopes:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            type: string
+        name:
+          type: string
+    APITokenCreateResponse:
+      type: object
+      description: Created token. token carries the raw value, returned exactly once (show-once).
+      allOf:
+        - $ref: "#/components/schemas/APIToken"
+      properties:
+        token:
+          type: string
+    WebAuthnCredential:
+      type: object
+      description: A registered passkey. Public key material and attestation data are never served.
+      properties:
+        id:
+          type: string
+        credential_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+
+    Tenant:
+      type: object
+      properties:
+        id:
+          type: string
+        handle:
+          type: string
+        did:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateTenantRequest:
+      type: object
+      properties:
+        id:
+          type: string
+        handle:
+          type: string
+        did_method:
+          type: string
+        did:
+          type: string
+    Client:
+      type: object
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        audience:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    ClientWithSecret:
+      type: object
+      properties:
+        client:
+          $ref: "#/components/schemas/Client"
+        secret:
+          type: string
+    CreateClientRequest:
+      type: object
+      required: [id]
+      properties:
+        id:
+          type: string
+    ClientSecret:
+      type: object
+      properties:
+        secret:
+          type: string
+    Takedown:
+      type: object
+      properties:
+        id:
+          type: string
+        resource:
+          type: string
+        reason:
+          type: string
+        acted_by:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    CreateTakedownRequest:
+      type: object
+      required: [resource, reason]
+      properties:
+        resource:
+          type: string
+        reason:
+          type: string
+    BackupConfig:
+      type: object
+      properties:
+        schedule:
+          type: string
+        destination:
+          type: string
+        prefix:
+          type: string
+        updated_at:
+          type: string
+          format: date-time
+    BackupRun:
+      type: object
+      properties:
+        id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        error:
+          type: string
+          nullable: true
+        size_bytes:
+          type: integer
+        destination_key:
+          type: string
+    BackupRestore:
+      type: object
+      properties:
+        id:
+          type: string
+        started_at:
+          type: string
+          format: date-time
+        finished_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+        error:
+          type: string
+          nullable: true
+        source_key:
+          type: string
+        requested_by:
+          type: string
+    RestoreRequest:
+      type: object
+      required: [source_key, confirm]
+      properties:
+        source_key:
+          type: string
+        confirm:
+          type: boolean
+    AuditEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        actor:
+          type: string
+        action:
+          type: string
+        resource:
+          type: string
+        detail:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    PendingDeletion:
+      type: object
+      properties:
+        id:
+          type: string
+        user_id:
+          type: string
+        requested_at:
+          type: string
+          format: date-time
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        approved_by:
+          type: string
+          nullable: true
+        approved_at:
+          type: string
+          format: date-time
+          nullable: true
+    SystemInfo:
+      type: object
+      properties:
+        domain:
+          type: string
+        audience:
+          type: string
+        data_dir:
+          type: string
+        open_registrations:
+          type: boolean
+        storage_backend:
+          type: string
+        ipfs_enabled:
+          type: boolean
+        smtp_enabled:
+          type: boolean
+        smtp_host:
+          type: string
+        smtp_from:
+          type: string
+        api_cors_origins:
+          type: array
+          maxItems: 100
+          items:
+            type: string
+    ToSDocument:
+      type: object
+      properties:
+        id:
+          type: string
+        version:
+          type: string
+        content:
+          type: string
+        published_at:
+          type: string
+          format: date-time
+        published_by:
+          type: string
+    PutToSRequest:
+      type: object
+      required: [version, content]
+      properties:
+        version:
+          type: string
+        content:
+          type: string
+    IPFSPin:
+      type: object
+      required: [cid, status]
+      properties:
+        cid:
+          type: string
+        status:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+    AddPinRequest:
+      type: object
+      required: [cid]
+      properties:
+        cid:
+          type: string
+    CreateUserRequest:
+      type: object
+      required: [handle, email]
+      properties:
+        tenant_id:
+          type: string
+        handle:
+          type: string
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+        is_admin:
+          type: boolean
+    UpdateUserRequest:
+      type: object
+      properties:
+        is_admin:
+          type: boolean
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string

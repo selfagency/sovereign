@@ -636,6 +636,14 @@ func must(t *testing.T, err error) {
 	}
 }
 
+// mustErrNotFound fails the test unless err is ErrNotFound.
+func mustErrNotFound(t *testing.T, err error) {
+	t.Helper()
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("want ErrNotFound, got %v", err)
+	}
+}
+
 // TestUserOnboardingStateUnknownUser verifies setters on a missing user
 // return ErrNotFound.
 func TestUserOnboardingStateUnknownUser(t *testing.T) {

@@ -48,8 +48,9 @@ func TestNewHandlerPathMismatchNoBypass(t *testing.T) {
 }
 
 // TestNewHandlerCookieAdminScope verifies a cookie-authenticated admin can reach
-// an admin:* route (the cookie principal is granted the admin scopes from the
-// user record), while a cookie non-admin is still 403.
+// a granular admin:* route (the cookie principal is granted the coarse admin
+// scopes from the user record, and scopeImplies satisfies the granular read
+// variant), while a cookie non-admin is still 403.
 func TestNewHandlerCookieAdminScope(t *testing.T) {
 	key := testSigningKey(t)
 	s := newTestStore(t)
@@ -85,8 +86,11 @@ func TestNewHandlerCookieAdminScope(t *testing.T) {
 	}
 
 	cfg := chainTestConfig(t, s, key)
+	// Register a REAL granular admin route (mirrors /api/v1/admin/users, scope
+	// admin:users:read). The cookie admin holds only the coarse admin:users
+	// scope, so this exercises the scopeImplies table, not an exact match.
 	cfg.Routes = append(cfg.Routes, RouteInfo{
-		Method: http.MethodGet, Path: "/api/v1/admin/users", Scope: "admin:users", Timeout: 5 * time.Second,
+		Method: http.MethodGet, Path: "/api/v1/admin/users", Scope: "admin:users:read", Timeout: 5 * time.Second,
 		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }),
 	})
 	life := NewHandler(cfg)

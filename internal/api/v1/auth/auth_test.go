@@ -1137,7 +1137,7 @@ func sessionCookieFixture(value string) *http.Cookie {
 // Secure+Path satisfy the __Host- prefix. Suppressed for semgrep's
 // cookie-http-only rule.
 func csrfCookieFixture(value string) *http.Cookie {
-	// nosemgrep: go.lang.security.audit.net.cookie-http-only.cookie-http-only -- double-submit CSRF token cookie, not a session cookie
+	// nosemgrep: cookie-missing-httponly -- double-submit CSRF token cookie, not a session cookie
 	return &http.Cookie{
 		Name:     "__Host-csrf",
 		Value:    value,

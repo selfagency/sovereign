@@ -8,12 +8,16 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/selfagency/sovereign/internal/api/v1/admin"
+	"github.com/selfagency/sovereign/internal/api/v1/admin/system"
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
 	apiauth "github.com/selfagency/sovereign/internal/auth"
+	"github.com/selfagency/sovereign/internal/mail"
 	"github.com/selfagency/sovereign/internal/store"
 )
 
@@ -160,5 +164,60 @@ func TestRoutesForAPIAnonymousEntryPoint(t *testing.T) {
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/invite/unknown-token", http.NoBody))
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("GET /invite/unknown-token with wired handler = %d, want 404", rec.Code)
+	}
+}
+
+// TestAdminRoutesAllScoped verifies every admin route declares an admin:* coarse
+// scope (so the scope middleware additionally enforces IsAdmin) and is not
+// anonymous, and that GET/mutation timeouts follow the 5s/10s convention.
+func TestAdminRoutesAllScoped(t *testing.T) {
+	for _, r := range adminRoutes(nil) {
+		if r.Anonymous {
+			t.Errorf("admin route %s %s is anonymous; admin routes must be authenticated+scoped", r.Method, r.Path)
+		}
+		if !strings.HasPrefix(r.Scope, "admin:") {
+			t.Errorf("admin route %s %s declares scope %q; want an admin:* scope", r.Method, r.Path, r.Scope)
+		}
+		if !r.LongRunning && r.Timeout <= 0 {
+			t.Errorf("admin route %s %s has no positive timeout", r.Method, r.Path)
+		}
+	}
+}
+
+// TestRoutesForAdminWiresAdmin verifies RoutesForAdmin with a real admin handler
+// produces non-stub handlers on the admin routes (i.e. the adm != nil branch of
+// adminRoutes). It constructs the minimal aggregate: sub-handlers that only need
+// a store, plus a nil scheduler/backend for backup (whose read-only methods do
+// not touch them).
+func TestRoutesForAdminWiresAdmin(t *testing.T) {
+	s, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+
+	m := meta.New()
+	// admin.New needs a scheduler + backup producer + backend; pass nil for the
+	// backup-only bits (GetConfig/ListRuns etc. don't use them).
+	adm := admin.New(s, slog.New(slog.NewTextHandler(io.Discard, nil)), nil, nil, nil, nil, &system.Info{}, mail.NewLogSender(slog.New(slog.NewTextHandler(io.Discard, nil))), "https://id.example.test", nil)
+
+	routes := RoutesForAdmin(m, nil, nil, adm)
+	mux := New(routes)
+
+	// With a wired handler, an admin route without a principal returns 401 from
+	// the handler's defense-in-depth check, not the 501 stub.
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/admin/system/info", http.NoBody)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("GET /api/v1/admin/system/info with wired handler = %d, want 401 (not 501 stub)", rec.Code)
+	}
+
+	// Confirm Routes() (nil admin) still yields 501 on the same path.
+	stubMux := New(Routes())
+	stubRec := httptest.NewRecorder()
+	stubMux.ServeHTTP(stubRec, httptest.NewRequest(http.MethodGet, "/api/v1/admin/system/info", http.NoBody))
+	if stubRec.Code != http.StatusNotImplemented {
+		t.Fatalf("GET /api/v1/admin/system/info with stub = %d, want 501", stubRec.Code)
 	}
 }

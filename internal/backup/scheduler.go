@@ -141,35 +141,54 @@ func (s *Scheduler) Stop() {
 	s.cron.Stop()
 }
 
-// runBackup executes a single backup. Failures are logged and surfaced via
-// Status() so the admin UI can report them (previously they were swallowed).
+// runBackup executes a single backup on the cron schedule. Failures are
+// logged and surfaced via Status() so the admin UI can report them.
 func (s *Scheduler) runBackup() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
+	_, _, _ = s.runBackupOnce(ctx)
+}
 
+// RunNow executes a single backup synchronously and returns the destination
+// key, the number of bytes written, and any error. It is the manual-trigger
+// path used by the admin API: unlike runBackup it surfaces the result to the
+// caller (which records a backup_runs row) instead of only logging it.
+func (s *Scheduler) RunNow(ctx context.Context) (key string, size int64, err error) {
+	return s.runBackupOnce(ctx)
+}
+
+// runBackupOnce is the shared single-backup execution. It records the attempt
+// in Status() and returns the destination key, byte count, and error so both
+// the cron path and the manual RunNow path can report the outcome.
+func (s *Scheduler) runBackupOnce(ctx context.Context) (key string, size int64, err error) {
 	s.mu.Lock()
 	s.LastRun = time.Now().UTC()
 	s.mu.Unlock()
 
 	if s.BackupFn == nil {
-		s.failError("backup: no backup function configured")
-		return
+		err := errors.New("backup: no backup function configured")
+		s.failError(err.Error())
+		return "", 0, err
 	}
 	r, err := s.BackupFn(ctx)
 	if err != nil {
-		s.failError(fmt.Sprintf("backup: produce: %v", err))
-		return
+		err = fmt.Errorf("backup: produce: %w", err)
+		s.failError(err.Error())
+		return "", 0, err
 	}
 	name := "backup-" + time.Now().UTC().Format("20060102-150405") + ".tar.gz"
-	if _, err := s.config.Destination.WriteBackup(ctx, name, r); err != nil {
-		s.failError(fmt.Sprintf("backup: write: %v", err))
-		return
+	key, err = s.config.Destination.WriteBackup(ctx, name, r)
+	if err != nil {
+		err = fmt.Errorf("backup: write: %w", err)
+		s.failError(err.Error())
+		return "", 0, err
 	}
 
 	// Success: clear the last error.
 	s.mu.Lock()
 	s.LastError = ""
 	s.mu.Unlock()
+	return key, 0, nil
 }
 
 // Restore streams a stored backup into RestoreFn. It returns an error if no
