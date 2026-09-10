@@ -1055,7 +1055,7 @@ tasks:
     description: "Derive capabilities from actual wiring (capabilities handlers). Source NodeInfo + README status from capabilities. Every README claim maps to a capabilities entry AND a passing E2E test."
     wave: 12
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 4
     covers: [capabilities, nodeinfo, readme]
     dependencies: [T3.5]

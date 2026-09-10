@@ -153,7 +153,7 @@ func TestNodeInfoProtocolsWired(t *testing.T) {
 	_ = srv.store.CreateTenant(context.Background(), &store.Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"})
 
 	got := nodeInfoDoc(t, srv).Protocols
-	want := []string{"solid", "remotestorage", "atproto", "activitypub"}
+	want := []string{"solid", "remotestorage", "atproto", "activitypub", "webfinger"}
 	if len(got) != len(want) {
 		t.Fatalf("protocols = %v, want %v", got, want)
 	}
