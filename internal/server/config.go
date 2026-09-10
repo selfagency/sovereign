@@ -87,6 +87,17 @@ type APIConfig struct {
 	// CORSOrigins is the allowlist for cross-origin browser access.
 	// Deny-by-default (empty). Never '*' alongside credentials.
 	CORSOrigins []string `yaml:"cors_origins" mapstructure:"cors_origins"`
+	// RateLimit configures the per-IP token-bucket rate limiter applied to
+	// every /api/v1 route (brute-force protection on /auth/*). Rate is tokens
+	// per second; Burst is the initial allowance. Absent -> default
+	// {rate: 10, burst: 50}. rate: 0 disables the limiter.
+	RateLimit RateLimitConfig `yaml:"rate_limit" mapstructure:"rate_limit"`
+}
+
+// RateLimitConfig configures the per-IP token-bucket rate limiter.
+type RateLimitConfig struct {
+	Rate  float64 `yaml:"rate" mapstructure:"rate"`
+	Burst int     `yaml:"burst" mapstructure:"burst"`
 }
 
 // LoadConfig reads and parses a YAML config file.
@@ -112,6 +123,12 @@ func LoadConfig(path string) (*Config, error) {
 	// distinguish an absent key from an explicit false.
 	if !yamlKeyPresent(data, "auth", "session", "dual_read") {
 		cfg.Auth.Session.DualRead = true
+	}
+	// Absent api.rate_limit defaults to the tuned per-IP values (rate 10/s,
+	// burst 50). Only the ABSENT key defaults; an explicit block is preserved
+	// as-is (rate: 0 disables the limiter in server.go).
+	if !yamlKeyPresent(data, "api", "rate_limit") {
+		cfg.API.RateLimit = RateLimitConfig{Rate: 10, Burst: 50}
 	}
 	return &cfg, nil
 }

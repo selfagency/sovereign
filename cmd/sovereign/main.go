@@ -230,6 +230,12 @@ func loadServerConfig(v *viper.Viper) (*server.Config, error) {
 	if !strict.IsSet("auth.session.dual_read") {
 		cfg.Auth.Session.DualRead = true
 	}
+	// Absent api.rate_limit defaults to the tuned per-IP values (rate 10/s,
+	// burst 50), mirroring LoadConfig. An explicit block is preserved as-is
+	// (rate: 0 disables the limiter in server.go).
+	if !strict.IsSet("api.rate_limit") {
+		cfg.API.RateLimit = server.RateLimitConfig{Rate: 10, Burst: 50}
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
