@@ -9,7 +9,7 @@ import (
 )
 
 // wantCSP is the exact strict policy every asset response must carry.
-const wantCSP = "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'self'"
+const wantCSP = "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 // scriptTagRE matches an opening <script ...> tag.
 var scriptTagRE = regexp.MustCompile(`(?i)<script\b[^>]*>`)
@@ -36,6 +36,9 @@ func TestAssetHandlerServesSharedFiles(t *testing.T) {
 		{"/web/shared/simple.css", "text/css; charset=utf-8", "--accent"},
 		{"/web/panel/", "text/html; charset=utf-8", "<!doctype html>"},
 		{"/web/panel/index.html", "text/html; charset=utf-8", "<!doctype html>"},
+		{"/web/admin/", "text/html; charset=utf-8", "<!doctype html>"},
+		{"/web/admin/index.html", "text/html; charset=utf-8", "<!doctype html>"},
+		{"/web/admin/admin.js", "text/javascript; charset=utf-8", "import { api, ApiError }"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.path, func(t *testing.T) {
@@ -67,6 +70,12 @@ func TestAssetHandlerCSPIsStrict(t *testing.T) {
 	}
 	if ct := rec.Header().Get("X-Content-Type-Options"); ct != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q, want nosniff", ct)
+	}
+	if xfo := rec.Header().Get("X-Frame-Options"); xfo != "DENY" {
+		t.Errorf("X-Frame-Options = %q, want DENY", xfo)
+	}
+	if !strings.Contains(got, "frame-ancestors 'none'") {
+		t.Errorf("CSP missing frame-ancestors 'none': %q", got)
 	}
 }
 
@@ -153,6 +162,92 @@ func TestPanelIndexLoadsPanelModule(t *testing.T) {
 	}
 	if strings.Contains(html, "/panel/passkey") {
 		t.Error("panel index.html still references the removed /panel/passkey flag toggle")
+	}
+}
+
+// TestAdminIndexLoadsModule asserts the admin shell boots the client as an
+// external ES module, links the vendored stylesheet, carries no inline script,
+// and is served under the strict CSP.
+func TestAdminIndexLoadsModule(t *testing.T) {
+	rec := serve(t, Handler("/web/"), "/web/admin/index.html")
+	html := rec.Body.String()
+	if !strings.Contains(html, `type="module"`) {
+		t.Error("admin index.html does not load a module script")
+	}
+	if !strings.Contains(html, `src="/web/admin/admin.js"`) {
+		t.Error("admin index.html does not load admin.js as an external module")
+	}
+	if !strings.Contains(html, `href="/web/shared/simple.css"`) {
+		t.Error("admin index.html does not link the vendored stylesheet")
+	}
+	for _, tag := range scriptTagRE.FindAllString(html, -1) {
+		if !strings.Contains(strings.ToLower(tag), "src=") {
+			t.Errorf("inline <script> found: %q", tag)
+		}
+	}
+	if csp := rec.Header().Get("Content-Security-Policy"); csp != wantCSP {
+		t.Errorf("Content-Security-Policy = %q, want %q", csp, wantCSP)
+	}
+}
+
+// TestAdminModuleServesViews asserts admin.js is served as JavaScript and
+// references every admin API route from the context file (the route smoke
+// test): each view must reach its endpoints through the shared api.js, never
+// raw fetch.
+func TestAdminModuleServesViews(t *testing.T) {
+	rec := serve(t, Handler("/web/"), "/web/admin/admin.js")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/javascript; charset=utf-8" {
+		t.Errorf("Content-Type = %q, want text/javascript; charset=utf-8", ct)
+	}
+	js := rec.Body.String()
+	for _, want := range []string{
+		`"../shared/api.js"`,
+		// Dashboard.
+		"/admin/system/info", "/meta/capabilities",
+		// Tenants.
+		"/admin/tenants",
+		"/admin/tenants/${encodeURIComponent(id)}",
+		"/admin/tenants/${encodeURIComponent(t.id)}",
+		// Users: list/create, get/patch/delete, invite, credentials, revoke.
+		"/admin/users",
+		"/admin/users/${encodeURIComponent(id)}",
+		"/admin/users/${encodeURIComponent(u.id)}",
+		"/admin/users/${encodeURIComponent(id)}/invites",
+		"/admin/users/${encodeURIComponent(id)}/credentials",
+		"/admin/users/${encodeURIComponent(id)}/sessions:revoke",
+		// Clients: list/create, delete, secret rotation.
+		"/admin/clients",
+		"/admin/clients/${encodeURIComponent(id)}",
+		"/admin/clients/${encodeURIComponent(c.id)}",
+		"/admin/clients/${encodeURIComponent(id)}/secret/rotate",
+		// Backups: config, runs, restores.
+		"/admin/backup/config", "/admin/backup/runs", "/admin/backup/restores",
+		"/admin/backup/runs/${encodeURIComponent(id)}",
+		// Moderation takedowns.
+		"/admin/moderation/takedowns",
+		"/admin/moderation/takedowns/${encodeURIComponent(id)}",
+		"/admin/moderation/takedowns/${encodeURIComponent(t.id)}",
+		// Audit log.
+		"/admin/audit",
+		// IPFS pins.
+		"/admin/ipfs/pins",
+		"/admin/ipfs/pins/${encodeURIComponent(cid)}",
+		// Terms of Service.
+		"/admin/tos",
+		// Deletion requests: list, approve, reject.
+		"/admin/deletion-requests",
+		"/admin/deletion-requests/${encodeURIComponent(d.id)}/approve",
+		"/admin/deletion-requests/${encodeURIComponent(d.id)}/reject",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("admin.js missing %q", want)
+		}
+	}
+	if rawFetchRE.MatchString(js) {
+		t.Error("admin.js uses raw fetch; it must go through the shared api.js")
 	}
 }
 
