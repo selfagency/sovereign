@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sovereign</title>
+<link rel="stylesheet" href="/web/shared/simple.css">
+</head>
+<body>
+<header><h1>Sovereign</h1></header>
+<nav id="nav" aria-label="Panel sections" hidden>
+<button type="button" data-surface="profile">Profile</button>
+<button type="button" data-surface="keys">Keys</button>
+<button type="button" data-surface="proofs">Proofs</button>
+<button type="button" data-surface="credentials">Passkeys</button>
+<button type="button" data-surface="sessions">Sessions</button>
+<button type="button" data-surface="tokens">Tokens</button>
+<button type="button" data-surface="account">Account</button>
+</nav>
+<main>
+<noscript><p>This panel requires JavaScript.</p></noscript>
+<p id="flash" hidden></p>
+<section id="view"></section>
+</main>
+<footer><p>Sovereign identity server</p></footer>
+<script type="module" src="/web/panel/panel.js"></script>
+</body>
+</html>

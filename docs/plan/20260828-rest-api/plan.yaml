@@ -1103,7 +1103,7 @@ tasks:
     description: "Implement internal/web/shared: api.js (reads __Host-csrf, sends X-CSRF-Token on unsafe methods, normalizes problem+json to ApiError, tracks ETag, handles 401/403/429, generates Idempotency-Key for invite + backup run/restore), vendored simple.css (D-9), embed.go (go:embed dist). Strict CSP, no inline script, no framework, no npm."
     wave: 14
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 5
     covers: [D-9, thin-client, web-shared]
     dependencies: []
@@ -1131,7 +1131,7 @@ tasks:
     description: "Implement internal/web/panel (index.html, panel.js): client-side step machine driven by GET /api/v1/me/onboarding. Delete /panel/passkey flag toggle (set server-side on successful registration). New surfaces: keys, proofs+verify, credentials, sessions, tokens (incl create via POST /me/tokens), profile links reorder, publish toggle, avatar, export, deletion request."
     wave: 15
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 5
     covers: [thin-client, panel]
     dependencies: [T5.1]
@@ -1159,7 +1159,7 @@ tasks:
     description: "Implement internal/legacyforms: no-JS form adapters over store (D-7) for ToS accept and profile edit (303-redirect). Render the hidden csrf_token field in each form (synchronizer-token pattern, B1) so the no-JS POST passes CSRF. WebAuthn stays JS-only."
     wave: 15
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 5
     covers: [D-7, legacyforms, no-js, B1]
     dependencies: [T2.1, T2.2]
@@ -1187,7 +1187,7 @@ tasks:
     description: "Implement asset handler + go:embed wiring for web/ assets. Strict CSP (default-src 'none'; script-src 'self'; connect-src 'self'; no external origins), no inline script."
     wave: 15
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 5
     covers: [D-9, csp, embed]
     dependencies: [T5.1]
@@ -1214,7 +1214,7 @@ tasks:
     description: "Verify panel client: asset/CSP header tests, legacyforms no-JS ToS + profile path test (incl CSRF form-encoded)."
     wave: 16
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 5
     covers: [verification, gate]
     dependencies: [T5.2, T5.3, T5.4]

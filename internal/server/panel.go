@@ -124,7 +124,7 @@ var panelTemplates = template.Must(template.New("panel").Parse(`<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Sovereign — {{.Title}}</title>
-<link rel="stylesheet" href="https://cdn.simplecss.org/simple.min.css">
+<link rel="stylesheet" href="/web/shared/simple.css">
 </head>
 <body>
 <header><h1>Sovereign</h1></header>

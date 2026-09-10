@@ -40,6 +40,7 @@ import (
 	"github.com/selfagency/sovereign/internal/storage"
 	"github.com/selfagency/sovereign/internal/store"
 	"github.com/selfagency/sovereign/internal/tenant"
+	"github.com/selfagency/sovereign/internal/web"
 	"github.com/selfagency/sovereign/internal/wiring"
 )
 
@@ -332,6 +333,9 @@ func (s *Server) buildRouter() error {
 		// User panel (first-login ToS + passkey + profile).
 		identity.Handle("/panel", panelHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
 		identity.Handle("/panel/", panelHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
+		// Embedded web assets: the shared browser module (api.js, vendored
+		// simple.css) and the panel shell, served with a strict CSP.
+		identity.Handle("/web/", web.Handler("/web/"))
 		// IPFS pinning broker, behind the admin guard.
 		identity.Handle("/ipfs/pin", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.pin)))
 		identity.Handle("/ipfs/pin/", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.status)))
