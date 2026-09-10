@@ -9,7 +9,7 @@ import (
 )
 
 // wantCSP is the exact strict policy every asset response must carry.
-const wantCSP = "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'self'"
+const wantCSP = "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 // scriptTagRE matches an opening <script ...> tag.
 var scriptTagRE = regexp.MustCompile(`(?i)<script\b[^>]*>`)
@@ -70,6 +70,12 @@ func TestAssetHandlerCSPIsStrict(t *testing.T) {
 	}
 	if ct := rec.Header().Get("X-Content-Type-Options"); ct != "nosniff" {
 		t.Errorf("X-Content-Type-Options = %q, want nosniff", ct)
+	}
+	if xfo := rec.Header().Get("X-Frame-Options"); xfo != "DENY" {
+		t.Errorf("X-Frame-Options = %q, want DENY", xfo)
+	}
+	if !strings.Contains(got, "frame-ancestors 'none'") {
+		t.Errorf("CSP missing frame-ancestors 'none': %q", got)
 	}
 }
 

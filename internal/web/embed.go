@@ -21,7 +21,7 @@ var assets embed.FS
 // ContentSecurityPolicy is the strict policy served with every asset: nothing
 // is allowed by default; scripts, fetches, images, and styles must come from
 // this origin; there is no base URI and no cross-origin form posts.
-const ContentSecurityPolicy = "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'self'"
+const ContentSecurityPolicy = "default-src 'none'; script-src 'self'; connect-src 'self'; img-src 'self'; style-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 // contentTypes pins the Content-Type for the asset kinds the client ships.
 // Pinning (rather than sniffing) keeps a mislabeled file from being treated as
@@ -73,6 +73,7 @@ func Handler(prefix string) http.Handler {
 		h := w.Header()
 		h.Set("Content-Security-Policy", ContentSecurityPolicy)
 		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
 		h.Set("Content-Type", contentType(name))
 		h.Set("Cache-Control", "public, max-age=3600")
 		w.WriteHeader(http.StatusOK)

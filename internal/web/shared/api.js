@@ -17,14 +17,20 @@ const CSRF_COOKIE = "__Host-csrf";
 const CSRF_HEADER = "X-CSRF-Token";
 
 // POST endpoints the server marks Idempotent (api.Route.Idempotent).
+// Exact paths go in IDEMPOTENT_PATHS; parameterized patterns (e.g.
+// /api/v1/admin/users/{id}/invites) are matched by IDEMPOTENT_RE.
 const IDEMPOTENT_PATHS = new Set([
   "/api/v1/auth/invite/redeem",
   "/api/v1/admin/backup/runs",
   "/api/v1/admin/backup/restores",
+  "/api/v1/admin/users",
 ]);
+const IDEMPOTENT_RE = /^\/api\/v1\/admin\/users\/[^/]+\/invites$/;
 
 // etags remembers the last ETag per request path for conditional GETs.
 const etags = new Map();
+// bodies remembers the last response body per path so a 304 can replay it.
+const bodies = new Map();
 
 /** ApiError normalizes any non-2xx response (problem+json or not). */
 export class ApiError extends Error {
@@ -59,7 +65,9 @@ function idempotencyKey() {
 }
 
 function isIdempotent(method, path) {
-  return method === "POST" && IDEMPOTENT_PATHS.has(path.split("?")[0]);
+  if (method !== "POST") return false;
+  const clean = path.split("?")[0];
+  return IDEMPOTENT_PATHS.has(clean) || IDEMPOTENT_RE.test(clean);
 }
 
 function isProblem(contentType) {
@@ -141,10 +149,11 @@ async function request(method, path, body, opts = {}) {
   const etag = res.headers.get("ETag");
   if (method === "GET" && etag) etags.set(path, etag);
   if (res.status === 304) {
-    return { status: 304, data: null, etag: etag || etags.get(path) || null };
+    return { status: 304, data: bodies.get(path) ?? null, etag: etag || etags.get(path) || null };
   }
 
   const data = await readPayload(res);
+  if (method === "GET" && res.ok) bodies.set(path, data);
   const problem = isProblem(res.headers.get("content-type")) ? data : null;
   throwOnError(res, data, problem);
   return { status: res.status, data, etag: etag || null };
