@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/selfagency/sovereign/internal/admin"
 	"github.com/selfagency/sovereign/internal/api"
 	"github.com/selfagency/sovereign/internal/api/dto"
 	"github.com/selfagency/sovereign/internal/api/middleware"
@@ -25,6 +24,7 @@ import (
 	"github.com/selfagency/sovereign/internal/api/v1/self"
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/endpoints"
+	"github.com/selfagency/sovereign/internal/legacyforms"
 	"github.com/selfagency/sovereign/internal/mail"
 	"github.com/selfagency/sovereign/internal/moderation"
 	"github.com/selfagency/sovereign/internal/protocols/activitypub"
@@ -283,19 +283,8 @@ func (s *Server) buildRouter() error {
 	}
 
 	// Admin guard: validates a bearer access token and requires the subject
-	// to be an instance admin. Protects the admin backup + moderation routes.
+	// to be an instance admin. Protects the admin moderation route.
 	adminGuard := &wiring.AdminGuard{Key: s.authStore.SigningKeyMaterial(), Store: s.store, Issuer: issuer, Audience: s.cfg.Audience}
-
-	// Admin backup config (GET form / POST apply).
-	backupHandler := &admin.BackupHandler{
-		Apply: func(cfg admin.BackupConfig) error {
-			if err := admin.ValidateBackupConfig(cfg); err != nil {
-				return err
-			}
-			s.logger.Info("backup config applied", "schedule", cfg.Schedule, "destination", cfg.Destination, "prefix", cfg.Prefix)
-			return nil
-		},
-	}
 
 	// Admin moderation takedown with a persistent audit log.
 	takedown := &moderation.TakedownHandler{
@@ -323,16 +312,19 @@ func (s *Server) buildRouter() error {
 		identity.Handle("/indieauth/auth", http.HandlerFunc(indieAuthAuthorize(iaBridge, iaSessions)))
 		identity.Handle("/indieauth/token", http.HandlerFunc(indieAuthToken(iaBridge, iaSessions)))
 		// Admin routes on the identity host, behind the admin guard.
-		identity.Handle("/admin/backup", adminGuard.Middleware(backupHandler))
 		identity.Handle("/admin/moderation/takedown", adminGuard.Middleware(takedown))
-		// Admin user creation + magic-link invite.
-		userHandler := &admin.UserHandler{Store: s.store, Sender: s.mailer, BaseURL: "https://" + identityHost}
-		identity.Handle("/admin/users", adminGuard.Middleware(userHandler))
 		// Magic-link redemption (public, no admin guard).
 		identity.Handle("/invite/", inviteHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
-		// User panel (first-login ToS + passkey + profile).
-		identity.Handle("/panel", panelHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
-		identity.Handle("/panel/", panelHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
+		// User panel: the thin client shell (T5.2) plus the no-JS legacyforms
+		// adapters (T5.3) for ToS + profile. The old server-rendered panel was
+		// decommissioned in T7.1 behind the feature-parity gate. ServeMux
+		// redirects /panel to /panel/ (subtree root).
+		identity.Handle("/panel/", web.Handler("/panel/"))
+		identity.Handle("/panel/tos", legacyforms.NewHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
+		identity.Handle("/panel/profile", legacyforms.NewHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
+		// Admin console: the thin client shell (T6.2). The old admin HTTP
+		// layers (users, backup) were decommissioned in T7.1.
+		identity.Handle("/admin/", web.Handler("/admin/"))
 		// Embedded web assets: the shared browser module (api.js, vendored
 		// simple.css) and the panel shell, served with a strict CSP.
 		identity.Handle("/web/", web.Handler("/web/"))

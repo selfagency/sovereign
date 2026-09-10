@@ -45,9 +45,14 @@ var contentTypes = map[string]string{
 func Handler(prefix string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, prefix)
-		if name == "" || strings.Contains(name, "..") {
+		if strings.Contains(name, "..") {
 			http.NotFound(w, r)
 			return
+		}
+		// An empty name is the mount root (e.g. /panel/ or /admin/): serve the
+		// directory's index.html, same as any other directory request.
+		if name == "" {
+			name = "/"
 		}
 		name = path.Clean("/" + name)
 		rel := strings.TrimPrefix(name, "/")

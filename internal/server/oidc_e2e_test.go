@@ -1,14 +1,10 @@
 package server
 
 import (
-	"context"
 	"encoding/json"
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/selfagency/sovereign/internal/auth"
-	"github.com/selfagency/sovereign/internal/store"
 )
 
 // TestOIDCDiscovery verifies the OIDC provider is reachable on the identity
@@ -74,17 +70,6 @@ func TestWebAuthnNotOnTenantHost(t *testing.T) {
 	}
 }
 
-// TestAdminBackupRequiresAuth verifies the admin backup route rejects
-// unauthenticated requests.
-func TestAdminBackupRequiresAuth(t *testing.T) {
-	ts := startTestServer(t, &Config{}, false)
-
-	status, _ := ts.get(t, "/admin/backup", "id.example.com")
-	if status != http.StatusUnauthorized {
-		t.Fatalf("admin backup no-token status = %d, want 401", status)
-	}
-}
-
 // TestAdminModerationRequiresAuth verifies the admin moderation route rejects
 // unauthenticated requests.
 func TestAdminModerationRequiresAuth(t *testing.T) {
@@ -93,26 +78,5 @@ func TestAdminModerationRequiresAuth(t *testing.T) {
 	status, _ := ts.get(t, "/admin/moderation/takedown", "id.example.com")
 	if status != http.StatusUnauthorized {
 		t.Fatalf("admin moderation no-token status = %d, want 401", status)
-	}
-}
-
-// TestAdminBackupWithAdminToken verifies an admin token can reach the backup
-// route.
-func TestAdminBackupWithAdminToken(t *testing.T) {
-	ts := startTestServer(t, &Config{}, false)
-
-	// Seed an admin user and mint a token.
-	ctx := context.Background()
-	if err := ts.srv.store.CreateUser(ctx, &store.User{ID: "admin1", TenantID: "identity", Handle: "root"}); err != nil {
-		t.Fatal(err)
-	}
-	tok, err := auth.MintAccessToken(ts.srv.authStore.SigningKeyMaterial(), "admin1", []string{"admin"}, auth.AccessTokenTTL, "https://id."+ts.srv.cfg.Domain, ts.srv.cfg.Audience)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	status, body := ts.do(t, http.MethodGet, "/admin/backup", "id.example.com", tok, "", nil)
-	if status != http.StatusOK {
-		t.Fatalf("admin backup status = %d, want 200 (body %q)", status, body)
 	}
 }

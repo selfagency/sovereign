@@ -1283,7 +1283,7 @@ tasks:
     description: "BEFORE deleting, run a feature-parity gate: enumerate every function in internal/server/panel.go templates + internal/admin/{users,backup}.go HTTP layers and assert each maps to an API endpoint + client surface (R4). Only then delete those files. /panel/* and /admin/* become client shells + legacyforms."
     wave: 19
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 7
     covers: [decommission, cleanup, R4]
     dependencies: [T5.2, T5.3, T6.1]
@@ -1313,7 +1313,7 @@ tasks:
     description: "Run deadcode clean; ensure no html/template outside web/ and internal/protocols/hyperlink."
     wave: 20
     agent: gem-code-simplifier
-    status: pending
+    status: completed
     phase: 7
     covers: [deadcode, cleanup]
     dependencies: [T7.1]
@@ -1337,7 +1337,7 @@ tasks:
     description: "Verify decommission: deadcode clean, no html/template outside web/ and hyperlink."
     wave: 20
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 7
     covers: [verification, gate]
     dependencies: [T7.1]
@@ -1358,7 +1358,7 @@ tasks:
     description: "Tune per-IP token bucket rate limits; 429 with Retry-After + RateLimit-* headers. Load test on /auth/*."
     wave: 21
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 8
     covers: [rate-limit, hardening, C5]
     dependencies: [T1.4]
@@ -1385,7 +1385,7 @@ tasks:
     description: "Generate docs/reference/api/ from the OpenAPI spec."
     wave: 21
     agent: gem-documentation-writer
-    status: pending
+    status: completed
     phase: 8
     covers: [docs, api-reference]
     dependencies: [T1.5]
@@ -1404,7 +1404,7 @@ tasks:
     description: "Write docs/howto/user, docs/howto/admin, docs/howto/developer covering the new API + thin clients."
     wave: 21
     agent: gem-documentation-writer
-    status: pending
+    status: completed
     phase: 8
     covers: [docs, howto]
     dependencies: [T5.2, T6.1]
@@ -1422,7 +1422,7 @@ tasks:
     description: "Draft ADRs documenting decisions D-1..D-9 (identity-host-only control plane, stdlib routing, RFC 9457, handlers-call-store-directly [D-4 REVISED: no core/* layer; thin orchestration only where cross-store], OpenAPI source-of-truth + drift, browser/programmatic auth split, no-JS fallback, audience separation, vendored CSS + strict CSP). Decisions are signed off; ADRs record rationale. Note the adopted simplifications C1-C6 in the D-4 ADR."
     wave: 21
     agent: gem-documentation-writer
-    status: pending
+    status: completed
     phase: 8
     covers: [docs, adr]
     dependencies: []
@@ -1440,7 +1440,7 @@ tasks:
     description: "Write CHANGELOG covering breaking changes: strict config additions (auth.session.dual_read, api.cors_origins), session dual-read window (operator flips auth.session.dual_read to false and drops old JWT cookies after one release), audience separation (D-8), CSRF on cookie unsafe methods (bearer exempt; hidden csrf_token field for no-JS forms), GET /invite/{token} anonymous session-mint, decommissioned HTTP layers, POST /me/tokens, deletion-request endpoints."
     wave: 21
     agent: gem-documentation-writer
-    status: pending
+    status: completed
     phase: 8
     covers: [docs, changelog, migration, R2]
     dependencies: [T7.1]
@@ -1458,7 +1458,7 @@ tasks:
     description: "Verify hardening + docs: load test on /auth/*, docs build, per-package coverage >=80% (store >=90%)."
     wave: 22
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 8
     covers: [verification, gate]
     dependencies: [T8.1, T8.2, T8.3, T8.4, T8.5]
