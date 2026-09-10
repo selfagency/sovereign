@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sovereign Admin</title>
+<link rel="stylesheet" href="/web/shared/simple.css">
+</head>
+<body>
+<header><h1>Sovereign Admin</h1></header>
+<nav id="nav" aria-label="Admin sections">
+<a href="#dashboard" data-view="dashboard">Dashboard</a>
+<a href="#tenants" data-view="tenants">Tenants</a>
+<a href="#users" data-view="users">Users</a>
+<a href="#clients" data-view="clients">Clients</a>
+<a href="#backups" data-view="backups">Backups</a>
+<a href="#moderation" data-view="moderation">Moderation</a>
+<a href="#audit" data-view="audit">Audit</a>
+<a href="#ipfs" data-view="ipfs">IPFS pins</a>
+<a href="#tos" data-view="tos">Terms of Service</a>
+<a href="#deletions" data-view="deletions">Deletion requests</a>
+</nav>
+<main>
+<noscript><p>This admin console requires JavaScript.</p></noscript>
+<p id="flash" hidden></p>
+<section id="view"></section>
+</main>
+<footer><p>Sovereign identity server</p></footer>
+<script type="module" src="/web/admin/admin.js"></script>
+</body>
+</html>

@@ -15,7 +15,7 @@ import (
 	"strings"
 )
 
-//go:embed shared panel
+//go:embed shared panel admin
 var assets embed.FS
 
 // ContentSecurityPolicy is the strict policy served with every asset: nothing

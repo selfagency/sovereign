@@ -1235,7 +1235,7 @@ tasks:
     description: "Implement internal/web/admin (index.html, admin.js): all admin views (dashboard, tenants, users+invite, clients+secret rotation, backups, moderation, audit, IPFS pins, system info, deletion requests). Session-cookie auth like panel (supersedes bearer-only AdminGuard HTML-form gap, B13)."
     wave: 17
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 6
     covers: [thin-client, admin, B13, M2]
     dependencies: [T5.1]
@@ -1262,7 +1262,7 @@ tasks:
     description: "Verify admin client: asset/CSP tests, smoke test every admin API route reachable from a view."
     wave: 18
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 6
     covers: [verification, gate]
     dependencies: [T6.1]
