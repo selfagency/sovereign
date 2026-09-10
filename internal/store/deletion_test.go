@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"testing"
 )
@@ -57,6 +58,71 @@ func TestListPendingDeletionsDefaultLimit(t *testing.T) {
 	}
 	if len(epage) != 0 || etotal != 0 {
 		t.Fatalf("empty = %d/%d, want 0/0", len(epage), etotal)
+	}
+}
+
+// TestScanPendingDeletionRows exercises the shared row scanner directly: the
+// approved_by/approved_at branches (set and unset) and the missing
+// requested_at error.
+func TestScanPendingDeletionRows(t *testing.T) {
+	// Approved row: all fields set.
+	p := &PendingDeletion{}
+	err := scanPendingDeletionRows(func(dst ...any) error {
+		*dst[0].(*string) = "d1"
+		*dst[1].(*string) = "u1"
+		*dst[2].(*sql.NullString) = sql.NullString{String: "2026-09-10T12:00:00Z", Valid: true}
+		*dst[3].(*string) = "approved"
+		*dst[4].(*sql.NullString) = sql.NullString{String: "admin1", Valid: true}
+		*dst[5].(*sql.NullString) = sql.NullString{String: "2026-09-10T12:05:00Z", Valid: true}
+		return nil
+	}, p)
+	if err != nil {
+		t.Fatalf("scan approved: %v", err)
+	}
+	if p.ID != "d1" || p.UserID != "u1" || p.Status != "approved" {
+		t.Fatalf("approved scan = %+v", p)
+	}
+	if p.ApprovedBy == nil || *p.ApprovedBy != "admin1" {
+		t.Fatalf("approved_by = %v, want admin1", p.ApprovedBy)
+	}
+	if p.ApprovedAt == nil || p.ApprovedAt.Year() != 2026 {
+		t.Fatalf("approved_at = %v, want 2026", p.ApprovedAt)
+	}
+	if p.RequestedAt.Year() != 2026 {
+		t.Fatalf("requested_at = %v, want 2026", p.RequestedAt)
+	}
+
+	// Pending row: approved fields unset.
+	p = &PendingDeletion{}
+	err = scanPendingDeletionRows(func(dst ...any) error {
+		*dst[0].(*string) = "d2"
+		*dst[1].(*string) = "u2"
+		*dst[2].(*sql.NullString) = sql.NullString{String: "2026-09-10T13:00:00Z", Valid: true}
+		*dst[3].(*string) = "pending"
+		*dst[4].(*sql.NullString) = sql.NullString{}
+		*dst[5].(*sql.NullString) = sql.NullString{}
+		return nil
+	}, p)
+	if err != nil {
+		t.Fatalf("scan pending: %v", err)
+	}
+	if p.ApprovedBy != nil || p.ApprovedAt != nil {
+		t.Fatalf("pending scan set approved fields: %+v", p)
+	}
+
+	// Missing requested_at -> error.
+	p = &PendingDeletion{}
+	err = scanPendingDeletionRows(func(dst ...any) error {
+		*dst[0].(*string) = "d3"
+		*dst[1].(*string) = "u3"
+		*dst[2].(*sql.NullString) = sql.NullString{}
+		*dst[3].(*string) = "pending"
+		*dst[4].(*sql.NullString) = sql.NullString{}
+		*dst[5].(*sql.NullString) = sql.NullString{}
+		return nil
+	}, p)
+	if err == nil {
+		t.Fatal("missing requested_at accepted")
 	}
 }
 

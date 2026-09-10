@@ -17,6 +17,9 @@ a Go toolchain and familiarity with the repo conventions in
 * **[Documentation authoring policy](documentation.md)** — the contract for
   doc changes, the Shipped/Partial/Planned labels, and the `docs-verify`
   gates.
+* **[Call the REST API](api.md)** — authenticate (bearer vs cookie, CSRF),
+  handle problem+json errors, use `Idempotency-Key` and ETags, and reuse the
+  shared `api.js` client.
 
 ## Reference
 

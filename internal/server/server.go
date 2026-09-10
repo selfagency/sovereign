@@ -424,6 +424,16 @@ func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, erro
 	pub := v1public.New(s.store, s.logger)
 
 	routes := api.ToRouteInfo(api.RoutesForPublic(h, ah, sh, adm, pub))
+
+	// Per-IP token-bucket rate limiter for the whole control plane. The
+	// configured values default to rate 10/s burst 50 (see config.go):
+	// generous enough for legitimate bursts while capping brute-force attempts
+	// on /auth/*. rate: 0 disables the limiter (nil -> chain no-op).
+	var rl *middleware.RateLimiter
+	if s.cfg.API.RateLimit.Rate > 0 && s.cfg.API.RateLimit.Burst > 0 {
+		rl = middleware.NewRateLimiter(s.cfg.API.RateLimit.Rate, s.cfg.API.RateLimit.Burst)
+	}
+
 	life := middleware.NewHandler(&middleware.ChainConfig{
 		Routes:        routes,
 		Logger:        s.logger,
@@ -434,9 +444,17 @@ func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, erro
 		Users:         s.store,
 		DualRead:      s.cfg.Auth.Session.DualRead,
 		CORSOrigins:   s.cfg.API.CORSOrigins,
+		RateLimit:     rl,
 		BodyLimit:     middleware.DefaultMaxBodyBytes,
 	})
-	s.apiClose = life.Close
+	// The rate limiter owns its own prune goroutine (created outside the
+	// chain), so Close must stop both the chain and the limiter.
+	s.apiClose = func() {
+		life.Close()
+		if rl != nil {
+			rl.Close()
+		}
+	}
 	return life, nil
 }
 

@@ -56,5 +56,14 @@ api:
   # Never use '*' alongside credentials. Empty disables cross-origin.
   cors_origins: []
 
+  # Per-IP token-bucket rate limit for every /api/v1 route. Brute-force
+  # protection, chiefly for the /auth/* endpoints. rate = tokens/second,
+  # burst = initial allowance. Values below are the defaults; tighten for
+  # stricter protection (e.g. rate: 2, burst: 10 on auth-heavy deployments)
+  # at the cost of rejecting legitimate request bursts. rate: 0 disables.
+  rate_limit:
+    rate: 10
+    burst: 50
+
 # Allow anyone to self-register an account. Defaults to false (invite-only).
 # open_registrations: false

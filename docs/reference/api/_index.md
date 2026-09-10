@@ -29,6 +29,7 @@ hosts are rejected.
 | `/keys` | public SSH/PGP keys | none | [keys-and-proofs](keys-and-proofs.md) |
 | `/.well-known/openpgpkey/` | OpenPGP WKD lookup | none | [keys-and-proofs](keys-and-proofs.md) |
 | `/.well-known/proofs` | Keyoxide-style identity proofs | none | [keys-and-proofs](keys-and-proofs.md) |
+| `/api/v1/` | control plane (identity host only) | bearer or cookie | [control-plane](control-plane.md) |
 
 ## Conventions
 
@@ -43,8 +44,8 @@ hosts are rejected.
 
 ## Identity host (`id.<domain>`)
 
-The identity host serves the OIDC provider, WebAuthn passkey endpoints, and
-the admin surface. These are documented on the
+The identity host serves the OIDC provider, WebAuthn passkey endpoints, the
+control-plane REST API, and the admin surface. These are documented on the
 [status page](../../explanation/status.md) and in the
 [admin how-to](../../howto/admin/_index.md).
 
@@ -53,8 +54,11 @@ the admin surface. These are documented on the
 | `/.well-known/openid-configuration` | OIDC discovery | none |
 | `/authorize`, `/token`, `/userinfo`, `/keys` | OIDC provider | varies |
 | `/webauthn/register|login/{begin,finish}` | WebAuthn passkeys | session |
-| `/admin/backup` | Admin backup config | admin bearer token |
-| `/admin/moderation/takedown` | Admin moderation | admin bearer token |
+| `/api/v1/` | control-plane REST API | bearer or cookie | [control-plane](control-plane.md) |
+| `/panel/`, `/admin/` | thin clients (user panel, admin console) | session cookie |
+| `/panel/tos`, `/panel/profile` | no-JS fallback forms | session cookie + CSRF |
+| `/admin/moderation/takedown` | legacy moderation route | admin bearer token |
+| `/invite/{token}` | magic-link redemption | none (mints session) |
 
 ## Not yet mounted
 

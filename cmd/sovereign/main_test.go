@@ -66,6 +66,30 @@ func TestRunServeValidConfig(t *testing.T) {
 	}
 }
 
+// TestLoadServerConfigRateLimitDefault verifies the Viper path applies the
+// tuned per-IP rate-limit default when api.rate_limit is absent (mirroring
+// LoadConfig), so the production CLI path is rate-limited by default.
+func TestLoadServerConfigRateLimitDefault(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yml")
+	if err := os.WriteFile(cfgPath, []byte("domain: example.com\ndata_dir: "+dir+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	v := viper.New()
+	v.Set("config", cfgPath)
+	if err := initConfig(rootCmd, v); err != nil {
+		t.Fatalf("initConfig: %v", err)
+	}
+	got, err := loadServerConfig(v)
+	if err != nil {
+		t.Fatalf("loadServerConfig: %v", err)
+	}
+	if got.API.RateLimit.Rate != 10 || got.API.RateLimit.Burst != 50 {
+		t.Fatalf("default rate_limit = %+v, want {10 50}", got.API.RateLimit)
+	}
+}
+
 // TestConfigRejectsUnknownKeysViper verifies the Viper path (loadServerConfig)
 // rejects an unknown config key via the ErrorUnused decoder option.
 func TestConfigRejectsUnknownKeysViper(t *testing.T) {

@@ -363,6 +363,27 @@ func TestRevokeAuthRefreshTokenFamily(t *testing.T) {
 	}
 }
 
+// TestDeleteClient verifies a client is removed and a missing client yields
+// ErrNotFound.
+func TestDeleteClient(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateClient(ctx, &Client{ID: "web", Secret: "secret"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := s.DeleteClient(ctx, "web"); err != nil {
+		t.Fatalf("DeleteClient: %v", err)
+	}
+	if _, err := s.ClientByID(ctx, "web"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ClientByID after delete = %v, want ErrNotFound", err)
+	}
+	// Deleting again -> ErrNotFound.
+	if err := s.DeleteClient(ctx, "web"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DeleteClient missing = %v, want ErrNotFound", err)
+	}
+}
+
 // TestSetClientSecret verifies re-registering a client secret hashes it and
 // updates the row, and rejects over-length secrets and unknown clients.
 func TestSetClientSecret(t *testing.T) {
