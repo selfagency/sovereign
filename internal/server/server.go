@@ -318,10 +318,16 @@ func (s *Server) buildRouter() error {
 		// User panel: the thin client shell (T5.2) plus the no-JS legacyforms
 		// adapters (T5.3) for ToS + profile. The old server-rendered panel was
 		// decommissioned in T7.1 behind the feature-parity gate. ServeMux
-		// redirects /panel to /panel/ (subtree root).
+		// redirects /panel to /panel/ (subtree root). The legacyforms adapters
+		// are wrapped in the double-submit CSRF middleware (they render the
+		// hidden csrf_token field and the cookie; the middleware validates it).
 		identity.Handle("/panel/", web.Handler("/panel/"))
-		identity.Handle("/panel/tos", legacyforms.NewHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
-		identity.Handle("/panel/profile", legacyforms.NewHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
+		legacyCSRF := &middleware.CSRF{IsCookiePrincipal: func(r *http.Request) bool {
+			_, err := r.Cookie("session")
+			return err == nil
+		}}
+		identity.Handle("/panel/tos", legacyCSRF.Middleware(legacyforms.NewHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience)))
+		identity.Handle("/panel/profile", legacyCSRF.Middleware(legacyforms.NewHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience)))
 		// Admin console: the thin client shell (T6.2). The old admin HTTP
 		// layers (users, backup) were decommissioned in T7.1.
 		identity.Handle("/admin/", web.Handler("/admin/"))

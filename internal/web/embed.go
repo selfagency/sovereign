@@ -50,12 +50,16 @@ func Handler(prefix string) http.Handler {
 			return
 		}
 		// An empty name is the mount root (e.g. /panel/ or /admin/): serve the
-		// directory's index.html, same as any other directory request.
+		// mounted directory's index.html. embed.FS rejects empty paths, so map
+		// the root to the prefix directory ("panel" for "/panel/") before stat.
 		if name == "" {
 			name = "/"
 		}
 		name = path.Clean("/" + name)
 		rel := strings.TrimPrefix(name, "/")
+		if rel == "" {
+			rel = strings.Trim(prefix, "/")
+		}
 
 		// Resolve directories to their index.html before reading, so a
 		// directory never produces a listing or a bogus content type.
