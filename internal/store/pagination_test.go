@@ -12,18 +12,10 @@ func TestListPageDefaults(t *testing.T) {
 	ctx := context.Background()
 	seedTenant(t, s, ctx, "t1", "t1", "did:web:t1")
 	seedUser(t, s, ctx, "u1", "t1", "alice")
-	if err := s.CreateClient(ctx, &Client{ID: "web", Secret: "s"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.AppendAudit(ctx, &AuditEntry{ID: "a1", Actor: "u1", Action: "test"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreateBackupRun(ctx, &BackupRun{ID: "r1", Status: "ok"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.CreateBackupRestore(ctx, &BackupRestore{ID: "rs1", Status: "ok"}); err != nil {
-		t.Fatal(err)
-	}
+	must(t, s.CreateClient(ctx, &Client{ID: "web", Secret: "s"}))
+	must(t, s.AppendAudit(ctx, &AuditEntry{ID: "a1", Actor: "u1", Action: "test"}))
+	must(t, s.CreateBackupRun(ctx, &BackupRun{ID: "r1", Status: "ok"}))
+	must(t, s.CreateBackupRestore(ctx, &BackupRestore{ID: "rs1", Status: "ok"}))
 
 	// DB() exposes the handle.
 	if s.DB() == nil {
@@ -31,19 +23,22 @@ func TestListPageDefaults(t *testing.T) {
 	}
 
 	// limit=0 must default (not return empty / error).
-	if _, total, err := s.ListAllUsersPage(ctx, 0, 0); err != nil || total != 1 {
-		t.Fatalf("ListAllUsersPage(0,0) = total %d, err %v", total, err)
+	assertPageTotal(t, "ListAllUsersPage", func() (int, error) { _, total, err := s.ListAllUsersPage(ctx, 0, 0); return total, err }, 1)
+	assertPageTotal(t, "ListAuditAllPage", func() (int, error) { _, total, err := s.ListAuditAllPage(ctx, 0, 0); return total, err }, 1)
+	assertPageTotal(t, "ListClientsPage", func() (int, error) { _, total, err := s.ListClientsPage(ctx, 0, 0); return total, err }, 1)
+	assertPageTotal(t, "ListBackupRuns", func() (int, error) { _, total, err := s.ListBackupRuns(ctx, 0, 0); return total, err }, 1)
+	assertPageTotal(t, "ListBackupRestores", func() (int, error) { _, total, err := s.ListBackupRestores(ctx, 0, 0); return total, err }, 1)
+}
+
+// assertPageTotal asserts a paged list method returns the expected total with
+// limit=0 (the default branch) and no error.
+func assertPageTotal(t *testing.T, name string, call func() (int, error), want int) {
+	t.Helper()
+	total, err := call()
+	if err != nil {
+		t.Fatalf("%s(0,0): %v", name, err)
 	}
-	if _, total, err := s.ListAuditAllPage(ctx, 0, 0); err != nil || total != 1 {
-		t.Fatalf("ListAuditAllPage(0,0) = total %d, err %v", total, err)
-	}
-	if _, total, err := s.ListClientsPage(ctx, 0, 0); err != nil || total != 1 {
-		t.Fatalf("ListClientsPage(0,0) = total %d, err %v", total, err)
-	}
-	if runs, total, err := s.ListBackupRuns(ctx, 0, 0); err != nil || len(runs) != 1 || total != 1 {
-		t.Fatalf("ListBackupRuns(0,0) = %d runs/%d total, err %v", len(runs), total, err)
-	}
-	if restores, total, err := s.ListBackupRestores(ctx, 0, 0); err != nil || len(restores) != 1 || total != 1 {
-		t.Fatalf("ListBackupRestores(0,0) = %d restores/%d total, err %v", len(restores), total, err)
+	if total != want {
+		t.Fatalf("%s(0,0) total = %d, want %d", name, total, want)
 	}
 }

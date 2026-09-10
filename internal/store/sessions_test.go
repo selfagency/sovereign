@@ -251,50 +251,55 @@ func TestRevokeUserSessions(t *testing.T) {
 // TestRevokeUserSessionsExcept verifies all but the kept session are revoked,
 // and an empty keepID revokes everything.
 func TestRevokeUserSessionsExcept(t *testing.T) {
-	s := newSessionTestStore(t)
-	ctx := context.Background()
-	keep := mustSession(t, s, "user-1", mustToken(t))
-	mustSession(t, s, "user-1", mustToken(t))
-	mustSession(t, s, "user-2", mustToken(t))
+	t.Run("keeps one", func(t *testing.T) {
+		s := newSessionTestStore(t)
+		ctx := context.Background()
+		keep := mustSession(t, s, "user-1", mustToken(t))
+		mustSession(t, s, "user-1", mustToken(t))
+		mustSession(t, s, "user-2", mustToken(t))
 
-	if err := s.RevokeUserSessionsExcept(ctx, "user-1", keep.ID); err != nil {
-		t.Fatalf("RevokeUserSessionsExcept: %v", err)
-	}
-	all, err := s.ListUserSessions(ctx, "user-1")
+		must(t, s.RevokeUserSessionsExcept(ctx, "user-1", keep.ID))
+		assertRevokedExcept(t, s, ctx, "user-1", keep.ID)
+
+		// user-2 untouched.
+		other, err := s.ListUserSessions(ctx, "user-2")
+		if err != nil {
+			t.Fatalf("ListUserSessions user-2: %v", err)
+		}
+		if len(other) != 1 || other[0].RevokedAt != nil {
+			t.Fatalf("user-2 sessions = %+v, want one active", other)
+		}
+	})
+
+	t.Run("empty keepID revokes all", func(t *testing.T) {
+		s := newSessionTestStore(t)
+		ctx := context.Background()
+		mustSession(t, s, "user-1", mustToken(t))
+		mustSession(t, s, "user-1", mustToken(t))
+
+		must(t, s.RevokeUserSessionsExcept(ctx, "user-1", ""))
+		assertRevokedExcept(t, s, ctx, "user-1", "")
+	})
+}
+
+// assertRevokedExcept asserts every session of userID except keepID is revoked
+// and the kept session (if any) is still active.
+func assertRevokedExcept(t *testing.T, s *Store, ctx context.Context, userID, keepID string) {
+	t.Helper()
+	all, err := s.ListUserSessions(ctx, userID)
 	if err != nil {
 		t.Fatalf("ListUserSessions: %v", err)
 	}
-	for _, sess := range all {
-		if sess.ID == keep.ID {
+	for i := range all {
+		sess := &all[i]
+		if sess.ID == keepID {
 			if sess.RevokedAt != nil {
 				t.Fatalf("kept session %s was revoked", sess.ID)
 			}
 			continue
 		}
 		if sess.RevokedAt == nil {
-			t.Fatalf("user-1 session %s not revoked", sess.ID)
-		}
-	}
-	// user-2 untouched.
-	other, err := s.ListUserSessions(ctx, "user-2")
-	if err != nil {
-		t.Fatalf("ListUserSessions user-2: %v", err)
-	}
-	if len(other) != 1 || other[0].RevokedAt != nil {
-		t.Fatalf("user-2 sessions = %+v, want one active", other)
-	}
-
-	// Empty keepID revokes all of user-1's sessions.
-	if err := s.RevokeUserSessionsExcept(ctx, "user-1", ""); err != nil {
-		t.Fatalf("RevokeUserSessionsExcept all: %v", err)
-	}
-	all, err = s.ListUserSessions(ctx, "user-1")
-	if err != nil {
-		t.Fatalf("ListUserSessions: %v", err)
-	}
-	for _, sess := range all {
-		if sess.RevokedAt == nil {
-			t.Fatalf("session %s not revoked by empty keepID", sess.ID)
+			t.Fatalf("session %s not revoked", sess.ID)
 		}
 	}
 }
