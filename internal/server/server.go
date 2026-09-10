@@ -21,6 +21,7 @@ import (
 	v1system "github.com/selfagency/sovereign/internal/api/v1/admin/system"
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
+	v1public "github.com/selfagency/sovereign/internal/api/v1/public"
 	"github.com/selfagency/sovereign/internal/api/v1/self"
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/endpoints"
@@ -405,7 +406,11 @@ func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, erro
 		APICORSOrigins:    s.cfg.API.CORSOrigins,
 	}, s.mailer, "https://id."+s.cfg.Domain, s.ipfsBackend)
 
-	routes := api.ToRouteInfo(api.RoutesForAdmin(h, ah, sh, adm))
+	// Public handler for the anonymous /api/v1/public/* routes (published
+	// profile, keys, verified proofs). Tenant comes from the request context.
+	pub := v1public.New(s.store, s.logger)
+
+	routes := api.ToRouteInfo(api.RoutesForPublic(h, ah, sh, adm, pub))
 	life := middleware.NewHandler(&middleware.ChainConfig{
 		Routes:        routes,
 		Logger:        s.logger,

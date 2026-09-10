@@ -1028,7 +1028,7 @@ tasks:
     description: "Implement GET /api/v1/public/profile (404 when unpublished, no enumeration), /public/keys, /public/proofs. Mirrors over store-backed profile/keys/proofs handlers."
     wave: 12
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 4
     covers: [public-api, endpoints]
     dependencies: [T2.2, T2.3, T2.4]
