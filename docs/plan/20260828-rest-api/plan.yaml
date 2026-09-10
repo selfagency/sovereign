@@ -1082,7 +1082,7 @@ tasks:
     description: "Verify public API + capabilities truth: every README claim maps to a capabilities entry AND a passing E2E test."
     wave: 13
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 4
     covers: [verification, gate]
     dependencies: [T4.1, T4.2]
