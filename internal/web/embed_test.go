@@ -79,6 +79,26 @@ func TestAssetHandlerCSPIsStrict(t *testing.T) {
 	}
 }
 
+// TestMountRootServesIndex asserts a handler mounted at a subtree root (e.g.
+// /panel/ or /admin/) serves that directory's index.html for the bare root
+// path — the invite and legacyforms redirects land on /panel, so a 404 here
+// would break the onboarding flow.
+func TestMountRootServesIndex(t *testing.T) {
+	for _, prefix := range []string{"/panel/", "/admin/"} {
+		h := Handler(prefix)
+		rec := serve(t, h, prefix)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d, want 200", prefix, rec.Code)
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+			t.Errorf("GET %s Content-Type = %q, want text/html", prefix, ct)
+		}
+		if !strings.Contains(rec.Body.String(), "<!doctype html") {
+			t.Errorf("GET %s body is not an HTML document", prefix)
+		}
+	}
+}
+
 func TestAssetHandlerCacheControl(t *testing.T) {
 	rec := serve(t, Handler("/web/"), "/web/shared/simple.css")
 	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "max-age") {

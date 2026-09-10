@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -29,14 +28,24 @@ func TestInviteFlowE2E(t *testing.T) {
 
 	// Seed an admin and mint a token.
 	must(t, ts.srv.store.CreateUser(ctx, &store.User{ID: "admin1", TenantID: "identity", Handle: "root"}))
-	tok, err := auth.MintAccessToken(ts.srv.authStore.SigningKeyMaterial(), "admin1", []string{"admin"}, auth.AccessTokenTTL, "https://id."+ts.srv.cfg.Domain, ts.srv.cfg.Audience)
+	tok, err := auth.MintAccessToken(ts.srv.authStore.SigningKeyMaterial(), "admin1", []string{"admin:users:write"}, auth.AccessTokenTTL, "https://id."+ts.srv.cfg.Domain, "sovereign-api")
 	must(t, err)
 
-	// Admin creates a user.
-	form := url.Values{"email": {"alice@example.com"}, "handle": {"alice"}}
-	status, _ := ts.do(t, http.MethodPost, "/admin/users", "id.example.com", tok, "application/x-www-form-urlencoded", []byte(form.Encode()))
-	if status != http.StatusCreated {
-		t.Fatalf("create user = %d, want 201", status)
+	// Admin creates a user via the REST API (the old /admin/users HTTP layer
+	// was decommissioned in T7.1). The route is Idempotent, so the request
+	// must carry an Idempotency-Key.
+	body := `{"tenant_id":"identity","handle":"alice","email":"alice@example.com"}`
+	req, err := http.NewRequest(http.MethodPost, ts.baseURL+"/api/v1/admin/users", strings.NewReader(body))
+	must(t, err)
+	req.Host = "id.example.com"
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	req.Header.Set("Idempotency-Key", "e2e-invite-create")
+	resp, err := noRedirectClient().Do(req)
+	must(t, err)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create user = %d, want 201", resp.StatusCode)
 	}
 
 	// The dev LogSender logs the magic link; we can't capture it here, so
@@ -50,10 +59,10 @@ func TestInviteFlowE2E(t *testing.T) {
 	}))
 
 	// Redeem the magic link (no-redirect client so we can inspect the 302).
-	req, err := http.NewRequest(http.MethodGet, ts.baseURL+"/invite/"+raw, http.NoBody)
+	req, err = http.NewRequest(http.MethodGet, ts.baseURL+"/invite/"+raw, http.NoBody)
 	must(t, err)
 	req.Host = "id.example.com"
-	resp, err := noRedirectClient().Do(req)
+	resp, err = noRedirectClient().Do(req)
 	must(t, err)
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusFound {

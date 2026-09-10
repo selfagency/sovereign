@@ -45,12 +45,21 @@ var contentTypes = map[string]string{
 func Handler(prefix string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		name := strings.TrimPrefix(r.URL.Path, prefix)
-		if name == "" || strings.Contains(name, "..") {
+		if strings.Contains(name, "..") {
 			http.NotFound(w, r)
 			return
 		}
+		// An empty name is the mount root (e.g. /panel/ or /admin/): serve the
+		// mounted directory's index.html. embed.FS rejects empty paths, so map
+		// the root to the prefix directory ("panel" for "/panel/") before stat.
+		if name == "" {
+			name = "/"
+		}
 		name = path.Clean("/" + name)
 		rel := strings.TrimPrefix(name, "/")
+		if rel == "" {
+			rel = strings.Trim(prefix, "/")
+		}
 
 		// Resolve directories to their index.html before reading, so a
 		// directory never produces a listing or a bogus content type.

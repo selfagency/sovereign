@@ -1283,7 +1283,7 @@ tasks:
     description: "BEFORE deleting, run a feature-parity gate: enumerate every function in internal/server/panel.go templates + internal/admin/{users,backup}.go HTTP layers and assert each maps to an API endpoint + client surface (R4). Only then delete those files. /panel/* and /admin/* become client shells + legacyforms."
     wave: 19
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 7
     covers: [decommission, cleanup, R4]
     dependencies: [T5.2, T5.3, T6.1]
@@ -1313,7 +1313,7 @@ tasks:
     description: "Run deadcode clean; ensure no html/template outside web/ and internal/protocols/hyperlink."
     wave: 20
     agent: gem-code-simplifier
-    status: pending
+    status: completed
     phase: 7
     covers: [deadcode, cleanup]
     dependencies: [T7.1]
@@ -1337,7 +1337,7 @@ tasks:
     description: "Verify decommission: deadcode clean, no html/template outside web/ and hyperlink."
     wave: 20
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 7
     covers: [verification, gate]
     dependencies: [T7.1]
