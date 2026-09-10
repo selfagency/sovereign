@@ -21,6 +21,7 @@ import (
 	v1system "github.com/selfagency/sovereign/internal/api/v1/admin/system"
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
+	v1public "github.com/selfagency/sovereign/internal/api/v1/public"
 	"github.com/selfagency/sovereign/internal/api/v1/self"
 	"github.com/selfagency/sovereign/internal/auth"
 	"github.com/selfagency/sovereign/internal/endpoints"
@@ -39,6 +40,7 @@ import (
 	"github.com/selfagency/sovereign/internal/storage"
 	"github.com/selfagency/sovereign/internal/store"
 	"github.com/selfagency/sovereign/internal/tenant"
+	"github.com/selfagency/sovereign/internal/web"
 	"github.com/selfagency/sovereign/internal/wiring"
 )
 
@@ -53,6 +55,9 @@ type Server struct {
 	ipfsBackend ipfspin.Backend
 	mux         http.Handler
 	logger      *slog.Logger
+	// capProvider derives the wired-feature set from config + store; it is the
+	// source of truth for NodeInfo and the README status table (T4.2).
+	capProvider *capabilities.Provider
 	// apiClose stops the control-plane middleware chain's background goroutines
 	// (idempotency pruner) on Close.
 	apiClose func()
@@ -183,6 +188,15 @@ func buildBlobBackend(cfg *Config, logger *slog.Logger) (storage.Backend, error)
 func (s *Server) buildRouter() error {
 	mux := http.NewServeMux()
 
+	// Capabilities provider: the single source of truth for wired features.
+	// Built here (not in apiHandler) so NodeInfo and the README status table
+	// can source from the same derived set (T4.2).
+	capProvider := capabilities.New(capabilities.Config{
+		IPFSEnabled: s.cfg.IPFS.Enabled,
+		SMTPEnabled: s.cfg.SMTP.Enabled(),
+	}, s.store)
+	s.capProvider = capProvider
+
 	// Tenant-scoped blob backend resolver. Each tenant's keys are prefixed
 	// with the tenant ID on the shared backend, so tenants cannot read or
 	// write each other's data (IDOR boundary). Works for both FS and S3.
@@ -218,11 +232,12 @@ func (s *Server) buildRouter() error {
 	})
 	mux.Handle("/.well-known/webfinger", wf)
 
-	// NodeInfo.
+	// NodeInfo. Protocols are derived from the wired capabilities set, not a
+	// static list (T4.2): a protocol appears only when its capability is wired.
 	ni := nodeinfo.Handler(nodeinfo.Config{
 		SoftwareName:      "sovereign",
 		SoftwareVersion:   s.version,
-		Protocols:         []string{"solid", "remotestorage", "atproto", "activitypub"},
+		Protocols:         wiredProtocols(capProvider.Features()),
 		OpenRegistrations: s.cfg.OpenRegistrations,
 	})
 	mux.Handle("/.well-known/nodeinfo", ni)
@@ -318,6 +333,9 @@ func (s *Server) buildRouter() error {
 		// User panel (first-login ToS + passkey + profile).
 		identity.Handle("/panel", panelHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
 		identity.Handle("/panel/", panelHandler(s.store, s.authStore.SigningKeyMaterial(), issuer, s.cfg.Audience))
+		// Embedded web assets: the shared browser module (api.js, vendored
+		// simple.css) and the panel shell, served with a strict CSP.
+		identity.Handle("/web/", web.Handler("/web/"))
 		// IPFS pinning broker, behind the admin guard.
 		identity.Handle("/ipfs/pin", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.pin)))
 		identity.Handle("/ipfs/pin/", adminGuard.Middleware(http.HandlerFunc(ipfsBroker.status)))
@@ -365,11 +383,9 @@ func (h hostRouter) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, error) {
 	// Derive the wired-feature set from actual wiring (config + store), not a
 	// static list. This is the source of truth for NodeInfo and the README
-	// status table (Phase 4).
-	capProvider := capabilities.New(capabilities.Config{
-		IPFSEnabled: s.cfg.IPFS.Enabled,
-		SMTPEnabled: s.cfg.SMTP.Enabled(),
-	}, s.store)
+	// status table (Phase 4). The provider is built in buildRouter so NodeInfo
+	// and the API share the same derived set.
+	capProvider := s.capProvider
 
 	// /ready pings the SQLite store; unreachable store fails closed with 503.
 	ping := func(ctx context.Context) error { return s.store.DB().PingContext(ctx) }
@@ -405,7 +421,11 @@ func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, erro
 		APICORSOrigins:    s.cfg.API.CORSOrigins,
 	}, s.mailer, "https://id."+s.cfg.Domain, s.ipfsBackend)
 
-	routes := api.ToRouteInfo(api.RoutesForAdmin(h, ah, sh, adm))
+	// Public handler for the anonymous /api/v1/public/* routes (published
+	// profile, keys, verified proofs). Tenant comes from the request context.
+	pub := v1public.New(s.store, s.logger)
+
+	routes := api.ToRouteInfo(api.RoutesForPublic(h, ah, sh, adm, pub))
 	life := middleware.NewHandler(&middleware.ChainConfig{
 		Routes:        routes,
 		Logger:        s.logger,
@@ -571,4 +591,18 @@ func newLogger(cfg LogConfig) *slog.Logger {
 		level = slog.LevelError
 	}
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+}
+
+// wiredProtocols returns the NodeInfo protocol list derived from the wired
+// capabilities set: a protocol appears only when its capability is wired
+// (T4.2). The order is stable so the NodeInfo document is deterministic.
+func wiredProtocols(features map[string]dto.Capability) []string {
+	order := []string{"solid", "remotestorage", "atproto", "activitypub", "webfinger"}
+	out := make([]string, 0, len(order))
+	for _, name := range order {
+		if f, ok := features[name]; ok && f.Wired {
+			out = append(out, name)
+		}
+	}
+	return out
 }

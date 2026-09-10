@@ -16,6 +16,7 @@ import (
 	"github.com/selfagency/sovereign/internal/api/v1/admin"
 	v1auth "github.com/selfagency/sovereign/internal/api/v1/auth"
 	"github.com/selfagency/sovereign/internal/api/v1/meta"
+	v1public "github.com/selfagency/sovereign/internal/api/v1/public"
 	"github.com/selfagency/sovereign/internal/api/v1/self"
 )
 
@@ -85,7 +86,7 @@ var phase1Meta = meta.New(
 // control plane (T1.10). The route table is the single source of truth for
 // both entry points.
 func RoutesFor(h *meta.Handler) []Route {
-	return routesFor(h, nil, nil)
+	return routesFor(h, nil, nil, nil, nil)
 }
 
 // RoutesForAPI returns the current route set with both the given meta handler
@@ -93,21 +94,28 @@ func RoutesFor(h *meta.Handler) []Route {
 // Pass nil for the auth handler to keep those routes as 501 stubs (the drift
 // test checks parity only).
 func RoutesForAPI(h *meta.Handler, ah *v1auth.Handler) []Route {
-	return routesFor(h, ah, nil)
+	return routesFor(h, ah, nil, nil, nil)
 }
 
 // RoutesForSelf returns the current route set with the given meta, auth, and
 // self handlers wired. Pass nil for the self handler to keep the /me/* routes
 // as 501 stubs (the drift test checks parity only).
 func RoutesForSelf(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler) []Route {
-	return routesFor(h, ah, sh)
+	return routesFor(h, ah, sh, nil, nil)
 }
 
 // RoutesForAdmin returns the current route set with the given meta, auth,
 // self, and admin handlers wired. Pass nil for the admin handler to keep the
 // /admin/* routes as 501 stubs (the drift test checks parity only).
 func RoutesForAdmin(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler, adm *admin.Handler) []Route {
-	return routesFor(h, ah, sh, adm)
+	return routesFor(h, ah, sh, adm, nil)
+}
+
+// RoutesForPublic returns the current route set with the given meta, auth,
+// self, admin, and public handlers wired. Pass nil for the public handler to
+// keep the /public/* routes as 501 stubs (the drift test checks parity only).
+func RoutesForPublic(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler, adm *admin.Handler, pub *v1public.Handler) []Route {
+	return routesFor(h, ah, sh, adm, pub)
 }
 
 // Routes returns the current route set with the Phase-1 default meta handler
@@ -118,13 +126,9 @@ func Routes() []Route {
 }
 
 // routesFor is the shared route-table constructor. When ah is nil, the auth
-// routes are 501 stubs; otherwise they delegate to the auth handler. sh and
-// adm behave the same way for the self and admin routes.
-func routesFor(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler, adm ...*admin.Handler) []Route {
-	var a *admin.Handler
-	if len(adm) > 0 {
-		a = adm[0]
-	}
+// routes are 501 stubs; otherwise they delegate to the auth handler. sh, adm,
+// and pub behave the same way for the self, admin, and public routes.
+func routesFor(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler, adm *admin.Handler, pub *v1public.Handler) []Route {
 	return append([]Route{
 		// Meta / health / ready (anonymous).
 		{Method: http.MethodGet, Path: "/api/v1/meta/capabilities", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Capabilities},
@@ -132,7 +136,22 @@ func routesFor(h *meta.Handler, ah *v1auth.Handler, sh *self.Handler, adm ...*ad
 		{Method: http.MethodGet, Path: "/api/v1/health", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Health},
 		{Method: http.MethodGet, Path: "/api/v1/ready", Anonymous: true, Timeout: 5 * time.Second, Handler: h.Ready},
 		{Method: http.MethodGet, Path: "/api/v1/openapi.json", Anonymous: true, Timeout: 5 * time.Second, Handler: h.OpenAPI},
-	}, append(append(authRoutes(ah), selfRoutes(sh)...), adminRoutes(a)...)...)
+	}, append(append(append(authRoutes(ah), selfRoutes(sh)...), adminRoutes(adm)...), publicRoutes(pub)...)...)
+}
+
+// publicRoutes builds the anonymous /public/* route set. When pub is nil the
+// handlers are 501 stubs; otherwise they delegate to the public handler. All
+// routes are anonymous and tenant-scoped via the tenant middleware.
+func publicRoutes(pub *v1public.Handler) []Route {
+	profile, keys, proofs := stub(), stub(), stub()
+	if pub != nil {
+		profile, keys, proofs = pub.Profile, pub.Keys, pub.Proofs
+	}
+	return []Route{
+		{Method: http.MethodGet, Path: "/api/v1/public/profile", Anonymous: true, Timeout: 5 * time.Second, Handler: profile},
+		{Method: http.MethodGet, Path: "/api/v1/public/keys", Anonymous: true, Timeout: 5 * time.Second, Handler: keys},
+		{Method: http.MethodGet, Path: "/api/v1/public/proofs", Anonymous: true, Timeout: 5 * time.Second, Handler: proofs},
+	}
 }
 
 // authRoutes builds the auth/session/webauthn route set. When ah is nil the

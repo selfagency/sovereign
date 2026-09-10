@@ -639,7 +639,7 @@ tasks:
     description: "Implement internal/api/v1/me/identity handlers calling store directly (no internal/core layer, C1). Covers self read/write, onboarding, ToS, export, deletion request. Table-driven tests vs temp SQLite."
     wave: 9
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 2
     covers: [D-4, handlers, identity, C1]
     dependencies: [T0.5]
@@ -666,7 +666,7 @@ tasks:
     description: "Implement internal/api/v1/me/profile handlers calling store directly (no internal/core layer, C1). Profile read/write/publish, links CRUD + reorder, avatar. Table-driven vs temp SQLite."
     wave: 9
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 2
     covers: [D-4, handlers, profile, C1]
     dependencies: [T0.5]
@@ -693,7 +693,7 @@ tasks:
     description: "Implement internal/api/v1/me/keys handlers calling store directly (no internal/core layer, C1), wiring internal/keys (SSH/PGP parsing). Key CRUD + revoke. Table-driven vs temp SQLite."
     wave: 9
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 2
     covers: [D-4, handlers, keys, C1]
     dependencies: [T0.5]
@@ -722,7 +722,7 @@ tasks:
     description: "Implement internal/api/v1/me/proofs handlers calling store directly (no internal/core layer, C1), wiring internal/proofs (Keyoxide-style verification). Proof CRUD + verify. Keep thin orchestration for proofs verify wiring (cross-store). SSRF-safe verify (DNS resolve, reject loopback/private/link-local/multicast/cloud-metadata, cap redirects/body, strict timeout, background/scheduler not request path)."
     wave: 9
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 2
     covers: [D-4, handlers, proofs, ssrf, C1]
     dependencies: [T0.5]
@@ -752,7 +752,7 @@ tasks:
     description: "Implement internal/api/v1/me/sessions handlers calling store directly (no internal/core layer, C1). Session list/revoke (self), sliding renewal. Table-driven vs temp SQLite."
     wave: 9
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 2
     covers: [D-4, handlers, sessions, C1]
     dependencies: [T0.3, T0.5]
@@ -782,7 +782,7 @@ tasks:
     description: "Implement internal/api/v1/admin/tenants handlers calling store directly (no internal/core layer, C1). Tenant CRUD, GetTenantByID/DID. Table-driven vs temp SQLite."
     wave: 9
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 3
     covers: [D-4, handlers, tenants, C1]
     dependencies: [T0.5]
@@ -809,7 +809,7 @@ tasks:
     description: "Implement internal/api/v1/admin/clients handlers calling store directly (no internal/core layer, C1). Client CRUD + secret rotation (show-once, USER-APPROVED decision 5). Table-driven vs temp SQLite."
     wave: 9
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 3
     covers: [D-4, handlers, clients, C1]
     dependencies: [T0.5]
@@ -836,7 +836,7 @@ tasks:
     description: "Implement internal/api/v1/admin/backup handlers calling store directly (no internal/core layer, C1). Backup config persists + drives backup.Scheduler (thin cross-store orchestration); runs/restores are LONG-RUNNING (declared in route-table timeout column, not killed by default timeout) with Idempotency-Key. Table-driven vs temp SQLite."
     wave: 9
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 3
     covers: [D-4, handlers, backup, A3, M4, C1]
     dependencies: [T0.5]
@@ -867,7 +867,7 @@ tasks:
     description: "Implement internal/api/v1/admin/moderation handlers calling store directly (no internal/core layer, C1). Takedowns CRUD. Table-driven vs temp SQLite."
     wave: 9
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 3
     covers: [D-4, handlers, moderation, C1]
     dependencies: [T0.5]
@@ -894,7 +894,7 @@ tasks:
     description: "Implement internal/api/v1/admin/capabilities handlers calling store directly (no internal/core layer, C1). Machine-readable wired features; source of truth for NodeInfo + README status (Phase 4). Keep thin orchestration for capabilities derivation (cross-store). Table-driven vs temp SQLite."
     wave: 9
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 3
     covers: [D-4, handlers, capabilities, C1]
     dependencies: [T0.5]
@@ -921,7 +921,7 @@ tasks:
     description: "Register and wire all /me/* endpoints: GET/PATCH /me, DELETE /me (request + admin approval via pending_deletions), /me/onboarding, POST /me/tos, /me/export, /me/profile + publish/unpublish + avatar, /me/profile/links + reorder, /me/keys + revoke, /me/proofs + verify (wires internal/proofs), /me/credentials (409 on last), /me/sessions + revoke, /me/tokens (GET/DELETE + POST create programmatic token, show-once, scope-subset selection), /me/tokens/{family_id}. Thin handlers over store (T2.1-T2.5)."
     wave: 10
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 2
     covers: [self-api, endpoints, M2, M3]
     dependencies: [T1.3, T2.1, T2.2, T2.3, T2.4, T2.5]
@@ -951,7 +951,7 @@ tasks:
     description: "Register and wire all /admin/* endpoints: tenants, users + invites (Idempotency-Key; email sent INSIDE the idempotent handler so replay short-circuits before handler -> no re-send), credentials, sessions:revoke, clients + secret:rotate (show-once), backup config/runs/restores (long-running, Idempotency-Key), moderation/takedowns, audit (real actor field A8), ipfs/pins (non-panicking CID validator; NO Idempotency-Key), tos, system/info (secrets redacted), deletion-requests (GET /admin/deletion-requests, POST /admin/deletion-requests/{id}:approve|:reject). Thin handlers over store (T3.1-T3.5)."
     wave: 10
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 3
     covers: [admin-api, endpoints, A8, M2, M5, C6]
     dependencies: [T1.3, T3.1, T3.2, T3.3, T3.4, T3.5]
@@ -983,7 +983,7 @@ tasks:
     description: "Verify self API: scope matrix, ETag-on-GET tests, cross-tenant IDOR matrix returns 404, POST /me/tokens show-once, DELETE /me -> pending_deletions."
     wave: 11
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 2
     covers: [verification, gate]
     dependencies: [T2.6]
@@ -1004,7 +1004,7 @@ tasks:
     description: "Verify admin API: non-admin 403 on every admin route, idempotency replay test (one email), backup config->scheduler-start integration test, deletion-request approve/reject."
     wave: 11
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 3
     covers: [verification, gate]
     dependencies: [T3.6]
@@ -1028,7 +1028,7 @@ tasks:
     description: "Implement GET /api/v1/public/profile (404 when unpublished, no enumeration), /public/keys, /public/proofs. Mirrors over store-backed profile/keys/proofs handlers."
     wave: 12
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 4
     covers: [public-api, endpoints]
     dependencies: [T2.2, T2.3, T2.4]
@@ -1055,7 +1055,7 @@ tasks:
     description: "Derive capabilities from actual wiring (capabilities handlers). Source NodeInfo + README status from capabilities. Every README claim maps to a capabilities entry AND a passing E2E test."
     wave: 12
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 4
     covers: [capabilities, nodeinfo, readme]
     dependencies: [T3.5]
@@ -1082,7 +1082,7 @@ tasks:
     description: "Verify public API + capabilities truth: every README claim maps to a capabilities entry AND a passing E2E test."
     wave: 13
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 4
     covers: [verification, gate]
     dependencies: [T4.1, T4.2]
@@ -1103,7 +1103,7 @@ tasks:
     description: "Implement internal/web/shared: api.js (reads __Host-csrf, sends X-CSRF-Token on unsafe methods, normalizes problem+json to ApiError, tracks ETag, handles 401/403/429, generates Idempotency-Key for invite + backup run/restore), vendored simple.css (D-9), embed.go (go:embed dist). Strict CSP, no inline script, no framework, no npm."
     wave: 14
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 5
     covers: [D-9, thin-client, web-shared]
     dependencies: []
@@ -1131,7 +1131,7 @@ tasks:
     description: "Implement internal/web/panel (index.html, panel.js): client-side step machine driven by GET /api/v1/me/onboarding. Delete /panel/passkey flag toggle (set server-side on successful registration). New surfaces: keys, proofs+verify, credentials, sessions, tokens (incl create via POST /me/tokens), profile links reorder, publish toggle, avatar, export, deletion request."
     wave: 15
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 5
     covers: [thin-client, panel]
     dependencies: [T5.1]
@@ -1159,7 +1159,7 @@ tasks:
     description: "Implement internal/legacyforms: no-JS form adapters over store (D-7) for ToS accept and profile edit (303-redirect). Render the hidden csrf_token field in each form (synchronizer-token pattern, B1) so the no-JS POST passes CSRF. WebAuthn stays JS-only."
     wave: 15
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 5
     covers: [D-7, legacyforms, no-js, B1]
     dependencies: [T2.1, T2.2]
@@ -1187,7 +1187,7 @@ tasks:
     description: "Implement asset handler + go:embed wiring for web/ assets. Strict CSP (default-src 'none'; script-src 'self'; connect-src 'self'; no external origins), no inline script."
     wave: 15
     agent: gem-implementer
-    status: pending
+    status: completed
     phase: 5
     covers: [D-9, csp, embed]
     dependencies: [T5.1]
@@ -1214,7 +1214,7 @@ tasks:
     description: "Verify panel client: asset/CSP header tests, legacyforms no-JS ToS + profile path test (incl CSRF form-encoded)."
     wave: 16
     agent: gem-reviewer
-    status: pending
+    status: completed
     phase: 5
     covers: [verification, gate]
     dependencies: [T5.2, T5.3, T5.4]

@@ -71,6 +71,13 @@ linters:
       - path: internal/api/middleware/csrf\.go
         linters:
           - gosec
+      # web/embed.go writes go:embed'd static assets (api.js, simple.css,
+      # panel HTML) that are compiled into the binary at build time. G705's
+      # XSS taint analysis does not apply: the bytes are trusted project
+      # assets, never user input.
+      - path: internal/web/embed\.go
+        linters:
+          - gosec
 
 formatters:
   enable:

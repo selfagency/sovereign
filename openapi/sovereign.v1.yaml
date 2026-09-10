@@ -944,6 +944,54 @@ paths:
           $ref: "#/components/responses/Problem"
         "401":
           $ref: "#/components/responses/Problem"
+  /public/profile:
+    get:
+      operationId: publicProfile
+      summary: Published profile page for the tenant (404 when unpublished)
+      security: []
+      responses:
+        "200":
+          description: Published profile page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePage"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /public/keys:
+    get:
+      operationId: publicKeys
+      summary: Active public keys for the tenant (revoked keys excluded)
+      security: []
+      responses:
+        "200":
+          description: Active public keys
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 64
+                items:
+                  $ref: "#/components/schemas/PublicKey"
+        "404":
+          $ref: "#/components/responses/Problem"
+  /public/proofs:
+    get:
+      operationId: publicProofs
+      summary: Verified proof claims for the tenant (pending/failed excluded)
+      security: []
+      responses:
+        "200":
+          description: Verified proof claims
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 64
+                items:
+                  $ref: "#/components/schemas/ProofClaim"
+        "404":
+          $ref: "#/components/responses/Problem"
   /admin/tenants:
     get:
       operationId: adminListTenants
