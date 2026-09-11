@@ -800,22 +800,43 @@ func TestRedeemInviteAndCreateSessionAtomic(t *testing.T) {
 	if err := s.RedeemInviteToken(ctx, hash2, time.Now()); err != nil {
 		t.Fatalf("redeem after failed create = %v, want success (rollback)", err)
 	}
+}
 
-	// Classification paths (n != 1): used, expired, invalid.
-	// Used: hash was consumed by the happy path above.
-	if _, err := s.RedeemInviteAndCreateSession(ctx, hash, "tokhash3", time.Hour, "", ""); !errors.Is(err, ErrInviteUsed) {
-		t.Fatalf("used invite = %v, want ErrInviteUsed", err)
-	}
-	// Expired: expires_at in the past.
-	hash3 := "atomic3hash"
-	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "inv3", TokenHash: hash3, UserID: "u1", ExpiresAt: time.Now().Add(-time.Hour)}); err != nil {
+// TestRedeemInviteAndCreateSessionClassification verifies the n != 1
+// classification paths (used, expired, invalid) map to distinct errors.
+func TestRedeemInviteAndCreateSessionClassification(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RedeemInviteAndCreateSession(ctx, hash3, "tokhash4", time.Hour, "", ""); !errors.Is(err, ErrInviteExpired) {
+	if err := s.CreateUser(ctx, &User{ID: "u1", TenantID: "t1", Handle: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Used: redeem once, then redeem again.
+	hash := "classhash"
+	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "inv1", TokenHash: hash, UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RedeemInviteAndCreateSession(ctx, hash, "tokhash", time.Hour, "", ""); err != nil {
+		t.Fatalf("first redeem: %v", err)
+	}
+	if _, err := s.RedeemInviteAndCreateSession(ctx, hash, "tokhash2", time.Hour, "", ""); !errors.Is(err, ErrInviteUsed) {
+		t.Fatalf("used invite = %v, want ErrInviteUsed", err)
+	}
+
+	// Expired: expires_at in the past.
+	hash2 := "classhash2"
+	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "inv2", TokenHash: hash2, UserID: "u1", ExpiresAt: time.Now().Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RedeemInviteAndCreateSession(ctx, hash2, "tokhash3", time.Hour, "", ""); !errors.Is(err, ErrInviteExpired) {
 		t.Fatalf("expired invite = %v, want ErrInviteExpired", err)
 	}
+
 	// Invalid: unknown token hash.
-	if _, err := s.RedeemInviteAndCreateSession(ctx, "nohash", "tokhash5", time.Hour, "", ""); !errors.Is(err, ErrInviteInvalid) {
+	if _, err := s.RedeemInviteAndCreateSession(ctx, "nohash", "tokhash4", time.Hour, "", ""); !errors.Is(err, ErrInviteInvalid) {
 		t.Fatalf("unknown invite = %v, want ErrInviteInvalid", err)
 	}
 }
