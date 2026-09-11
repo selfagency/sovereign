@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -125,5 +126,70 @@ func TestIdempotencyRetention(t *testing.T) {
 	run() // call 2 after expiry
 	if calls != 2 {
 		t.Fatalf("calls = %d, want 2 after expiry", calls)
+	}
+}
+
+// TestIdempotencyConcurrentSameKey verifies concurrent requests with the same
+// key execute the side effect exactly once: the loser waits for the winner and
+// replays its stored response (security audit C1 — the lookup/execute/record
+// sequence must be atomic under concurrency).
+func TestIdempotencyConcurrentSameKey(t *testing.T) {
+	var mu sync.Mutex
+	calls := 0
+	id := NewIdempotency(func(string) bool { return true })
+	defer id.Close()
+	h := id.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		calls++
+		mu.Unlock()
+		// Slow the handler so concurrent requests overlap the window.
+		time.Sleep(50 * time.Millisecond)
+		w.Header().Set("X-Run", "yes")
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte("created"))
+	}))
+
+	const n = 8
+	var wg sync.WaitGroup
+	codes := make([]int, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/redeem", strings.NewReader(`{"code":"abc"}`))
+			req.Header.Set(idempotencyKeyHeader, "key-1")
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			codes[i] = rec.Code
+		}(i)
+	}
+	wg.Wait()
+
+	if calls != 1 {
+		t.Fatalf("calls = %d, want 1 (side effect must run once)", calls)
+	}
+	for i, c := range codes {
+		if c != http.StatusCreated {
+			t.Fatalf("request %d = %d, want 201", i, c)
+		}
+	}
+}
+
+// TestIdempotencyNoDuplicateHeaders verifies the first execution does not
+// duplicate response headers (audit C1 — bufferWriter forwards headers to the
+// real writer, so the post-handler copy must not re-add them).
+func TestIdempotencyNoDuplicateHeaders(t *testing.T) {
+	id := NewIdempotency(func(string) bool { return true })
+	defer id.Close()
+	h := id.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("X-Run", "yes")
+		w.WriteHeader(http.StatusCreated)
+	}))
+	req := httptest.NewRequest(http.MethodPost, "/redeem", http.NoBody)
+	req.Header.Set(idempotencyKeyHeader, "k")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Values("X-Run"); len(got) != 1 {
+		t.Fatalf("X-Run values = %v, want exactly 1", got)
 	}
 }
