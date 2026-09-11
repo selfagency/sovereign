@@ -246,6 +246,19 @@ func TestSafeRedirectBlocksPrivateTarget(t *testing.T) {
 	if err == nil {
 		t.Fatal("redirect to file scheme accepted, want error")
 	}
+
+	// Too many redirects -> blocked.
+	via := make([]*http.Request, 5)
+	err = SafeRedirect(resolver)(&http.Request{URL: mustURL(t, "http://public.example.com/next")}, via)
+	if err == nil {
+		t.Fatal("redirect chain over cap accepted, want error")
+	}
+
+	// Redirect without a URL -> blocked.
+	err = SafeRedirect(resolver)(&http.Request{}, nil)
+	if err == nil {
+		t.Fatal("redirect without url accepted, want error")
+	}
 }
 
 func mustURL(t *testing.T, raw string) *url.URL {

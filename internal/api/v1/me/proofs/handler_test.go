@@ -564,6 +564,15 @@ func TestVerifyUpdateStatusError(t *testing.T) {
 	}
 }
 
+// TestCloseIdempotent verifies Close can be called twice (worker already
+// stopped path).
+func TestCloseIdempotent(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(t, s, nil)
+	h.Close()
+	h.Close() // second call hits the already-closed branch
+}
+
 // TestIDFromPathEmpty verifies an empty path segment yields a 404.
 func TestIDFromPathEmpty(t *testing.T) {
 	s := testStore(t)

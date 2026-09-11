@@ -521,23 +521,7 @@ func (s *Store) RedeemInviteAndCreateSession(ctx context.Context, tokenHash, ses
 		return nil, fmt.Errorf("store: redeem invite token: %w", err)
 	}
 	if n != 1 {
-		// Zero rows: classify via a read inside the tx (same semantics as
-		// RedeemInviteToken). Reading on the tx avoids a second connection
-		// blocking on the uncommitted UPDATE.
-		var used sql.NullTime
-		var expiresAt time.Time
-		err := tx.QueryRowContext(ctx,
-			`SELECT used_at, expires_at FROM invite_tokens WHERE token_hash = ?`, tokenHash).Scan(&used, &expiresAt)
-		if err != nil {
-			return nil, ErrInviteInvalid
-		}
-		if used.Valid {
-			return nil, ErrInviteUsed
-		}
-		if now.After(expiresAt) {
-			return nil, ErrInviteExpired
-		}
-		return nil, ErrInviteInvalid
+		return nil, classifyInviteRedeem(ctx, tx, tokenHash, now)
 	}
 
 	lastSeen := now
@@ -580,6 +564,26 @@ func (s *Store) RedeemInviteAndCreateSession(ctx context.Context, tokenHash, ses
 		return nil, fmt.Errorf("store: redeem invite commit: %w", err)
 	}
 	return sess, nil
+}
+
+// classifyInviteRedeem maps a failed single-use redeem to the classified
+// error. It reads inside the tx to avoid a second connection blocking on the
+// uncommitted UPDATE (same semantics as RedeemInviteToken).
+func classifyInviteRedeem(ctx context.Context, tx *sql.Tx, tokenHash string, now time.Time) error {
+	var used sql.NullTime
+	var expiresAt time.Time
+	err := tx.QueryRowContext(ctx,
+		`SELECT used_at, expires_at FROM invite_tokens WHERE token_hash = ?`, tokenHash).Scan(&used, &expiresAt)
+	if err != nil {
+		return ErrInviteInvalid
+	}
+	if used.Valid {
+		return ErrInviteUsed
+	}
+	if now.After(expiresAt) {
+		return ErrInviteExpired
+	}
+	return ErrInviteInvalid
 }
 
 // CreateClient inserts an OIDC client. The secret is stored as an argon2id

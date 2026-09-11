@@ -800,6 +800,24 @@ func TestRedeemInviteAndCreateSessionAtomic(t *testing.T) {
 	if err := s.RedeemInviteToken(ctx, hash2, time.Now()); err != nil {
 		t.Fatalf("redeem after failed create = %v, want success (rollback)", err)
 	}
+
+	// Classification paths (n != 1): used, expired, invalid.
+	// Used: hash was consumed by the happy path above.
+	if _, err := s.RedeemInviteAndCreateSession(ctx, hash, "tokhash3", time.Hour, "", ""); !errors.Is(err, ErrInviteUsed) {
+		t.Fatalf("used invite = %v, want ErrInviteUsed", err)
+	}
+	// Expired: expires_at in the past.
+	hash3 := "atomic3hash"
+	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "inv3", TokenHash: hash3, UserID: "u1", ExpiresAt: time.Now().Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RedeemInviteAndCreateSession(ctx, hash3, "tokhash4", time.Hour, "", ""); !errors.Is(err, ErrInviteExpired) {
+		t.Fatalf("expired invite = %v, want ErrInviteExpired", err)
+	}
+	// Invalid: unknown token hash.
+	if _, err := s.RedeemInviteAndCreateSession(ctx, "nohash", "tokhash5", time.Hour, "", ""); !errors.Is(err, ErrInviteInvalid) {
+		t.Fatalf("unknown invite = %v, want ErrInviteInvalid", err)
+	}
 }
 
 // TestInviteTokenErrorClassification verifies used/expired/not-found map to
