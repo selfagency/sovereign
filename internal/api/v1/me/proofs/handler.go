@@ -9,6 +9,7 @@
 package proofs
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -38,11 +39,26 @@ type Handler struct {
 	store    *store.Store
 	verifier *proofs.Verifier
 	logger   *slog.Logger
+
+	// jobs is the background verification queue (audit D2): Verify enqueues
+	// a claim and returns 202 pending; a worker goroutine runs the SSRF-safe
+	// verifier off the request path and persists the result. AGENTS.md
+	// requires SSRF-sensitive fetches to run in the background, not
+	// synchronously in the request path.
+	jobs chan verifyJob
+	stop chan struct{}
+}
+
+// verifyJob is one queued claim verification.
+type verifyJob struct {
+	tenantID string
+	claimID  string
 }
 
 // New builds a proofs Handler against the store and the SSRF-safe verifier.
 // When verifier is nil a default is built with a strict timeout and a bounded
-// redirect chain; the SSRF guard itself lives in internal/proofs.
+// redirect chain; the SSRF guard itself lives in internal/proofs. A background
+// worker is started to process verification jobs; call Close to stop it.
 func New(st *store.Store, verifier *proofs.Verifier, logger *slog.Logger) *Handler {
 	if logger == nil {
 		logger = slog.Default()
@@ -50,18 +66,71 @@ func New(st *store.Store, verifier *proofs.Verifier, logger *slog.Logger) *Handl
 	if verifier == nil {
 		verifier = &proofs.Verifier{
 			HTTPClient: &http.Client{
-				Timeout: 10 * time.Second,
-				CheckRedirect: func(req *http.Request, via []*http.Request) error {
-					if len(via) >= 5 {
-						return errors.New("proofs: too many redirects")
-					}
-					return nil
-				},
+				Timeout:       10 * time.Second,
+				CheckRedirect: proofs.SafeRedirect(net.DefaultResolver),
 			},
 			Resolver: net.DefaultResolver,
 		}
 	}
-	return &Handler{store: st, verifier: verifier, logger: logger}
+	h := &Handler{
+		store:    st,
+		verifier: verifier,
+		logger:   logger,
+		jobs:     make(chan verifyJob, 64),
+		stop:     make(chan struct{}),
+	}
+	go h.worker()
+	return h
+}
+
+// Close stops the background verification worker.
+func (h *Handler) Close() {
+	select {
+	case <-h.stop:
+		return // already closed
+	default:
+	}
+	close(h.stop)
+}
+
+// worker drains the verification queue off the request path (audit D2).
+func (h *Handler) worker() {
+	for {
+		select {
+		case <-h.stop:
+			return
+		case job := <-h.jobs:
+			h.verifyAndPersist(job)
+		}
+	}
+}
+
+// verifyAndPersist runs the SSRF-safe verifier for a queued claim and
+// persists the resulting status. It runs in the background worker, never in
+// the request path.
+func (h *Handler) verifyAndPersist(job verifyJob) {
+	ctx := context.Background()
+	c, err := h.store.GetProofClaim(ctx, job.tenantID, job.claimID)
+	if err != nil {
+		h.logger.Error("proofs: background verify load", "tenant", job.tenantID, "claim", job.claimID, "err", err)
+		return
+	}
+	res, verr := h.verifier.Verify(ctx, &proofs.Claim{
+		ID:            c.ID,
+		AnchorType:    c.AnchorType,
+		AnchorValue:   c.AnchorValue,
+		Service:       c.Service,
+		ClaimLocation: c.ClaimLocation,
+		ExpectedToken: c.ExpectedToken,
+	})
+	status := res.Status
+	lastErr := ""
+	if verr != nil {
+		lastErr = verr.Error()
+	}
+	if err := h.store.UpdateProofClaimStatus(ctx, job.tenantID, c.ID, status, lastErr); err != nil {
+		h.logger.Error("proofs: background verify persist", "tenant", job.tenantID, "claim", c.ID, "err", err)
+	}
 }
 
 // List returns the authenticated tenant's proof claims.
@@ -164,9 +233,11 @@ func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// Verify runs SSRF-safe verification of a claim by id and persists the
-// resulting status. This is a user-initiated action, so it runs synchronously
-// and returns the outcome; the internal/proofs verifier enforces the SSRF
+// Verify queues SSRF-safe verification of a claim by id and returns 202
+// Accepted with the claim in the pending state. The actual fetch runs in a
+// background worker (audit D2 / AGENTS.md: SSRF-sensitive fetches must not
+// run synchronously in the request path); the persisted status is updated
+// when the worker finishes. The internal/proofs verifier enforces the SSRF
 // guard (DNS resolve, reject private/loopback/link-local/metadata ranges,
 // bounded redirects and body size, strict timeout) before any fetch.
 func (h *Handler) Verify(w http.ResponseWriter, r *http.Request) {
@@ -178,33 +249,28 @@ func (h *Handler) Verify(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ctx := r.Context()
-	c, err := h.store.GetProofClaim(ctx, u.TenantID, id)
+	c, err := h.store.GetProofClaim(r.Context(), u.TenantID, id)
 	if err != nil {
 		h.writeStoreErr(w, err, "get proof for verify")
 		return
 	}
-	res, verr := h.verifier.Verify(ctx, &proofs.Claim{
-		ID:            c.ID,
-		AnchorType:    c.AnchorType,
-		AnchorValue:   c.AnchorValue,
-		Service:       c.Service,
-		ClaimLocation: c.ClaimLocation,
-		ExpectedToken: c.ExpectedToken,
-	})
-	status := res.Status
-	lastErr := ""
-	if verr != nil {
-		lastErr = verr.Error()
-	}
-	if err := h.store.UpdateProofClaimStatus(ctx, u.TenantID, c.ID, status, lastErr); err != nil {
-		h.logger.Error("proofs: update status", "err", err)
+	// Mark pending and enqueue; the worker persists the outcome.
+	if err := h.store.UpdateProofClaimStatus(r.Context(), u.TenantID, c.ID, "pending", ""); err != nil {
+		h.logger.Error("proofs: mark pending", "err", err)
 		problem.Internal().Write(w)
 		return
 	}
-	c.Status = status
-	c.LastError = lastErr
-	writeJSON(w, http.StatusOK, proofClaimDTO(c))
+	select {
+	case h.jobs <- verifyJob{tenantID: u.TenantID, claimID: c.ID}:
+	default:
+		// Queue full: fail closed rather than silently dropping the job.
+		h.logger.Error("proofs: verify queue full", "claim", c.ID)
+		problem.Internal().Write(w)
+		return
+	}
+	c.Status = "pending"
+	c.LastError = ""
+	writeJSON(w, http.StatusAccepted, proofClaimDTO(c))
 }
 
 // --- helpers ---

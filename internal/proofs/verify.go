@@ -9,6 +9,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"strings"
@@ -86,10 +87,14 @@ func (v *Verifier) verifyHTTPBody(ctx context.Context, claim *Claim) (Result, er
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	// Hard cap response body size — never read an unbounded remote body.
-	body := make([]byte, 64*1024)
-	n, _ := resp.Body.Read(body)
-	if strings.Contains(string(body[:n]), claim.ExpectedToken) {
+	// Hard cap response body size — never read an unbounded remote body. Read
+	// the full capped body (a single Read may return a partial chunk, so scan
+	// the whole stream for the token — audit D3).
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return Result{Status: "failed"}, err
+	}
+	if strings.Contains(string(body), claim.ExpectedToken) {
 		return Result{Status: "verified"}, nil
 	}
 	return Result{Status: "failed"}, errors.New("proofs: token not found in response body")
@@ -113,6 +118,29 @@ func requireSafeURL(ctx context.Context, rawURL string, resolver Resolver) error
 		}
 	}
 	return nil
+}
+
+// SafeRedirect returns an http.Client.CheckRedirect that re-vets every
+// redirect hop (audit D1): the initial URL is vetted by requireSafeURL, but a
+// public URL can 302 to a private/loopback/cloud-metadata address, so each
+// redirect target must be re-checked for scheme and resolved IP. It also caps
+// the redirect chain.
+func SafeRedirect(resolver Resolver) func(req *http.Request, via []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 5 {
+			return errors.New("proofs: too many redirects")
+		}
+		if req.URL == nil {
+			return errors.New("proofs: redirect without url")
+		}
+		if req.URL.Scheme != "http" && req.URL.Scheme != "https" {
+			return fmt.Errorf("proofs: redirect to unsupported scheme %q", req.URL.Scheme)
+		}
+		if err := requireSafeURL(req.Context(), req.URL.String(), resolver); err != nil {
+			return err
+		}
+		return nil
+	}
 }
 
 // hostFromURL extracts the host from a URL string.

@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 )
 
@@ -101,6 +102,39 @@ func TestVerifyHTTPBody(t *testing.T) {
 	}
 }
 
+// TestVerifyHTTPBodyTokenAcrossReads verifies a token that spans multiple
+// Read calls is still found (audit D3): the body is scanned in full, not just
+// the first chunk.
+func TestVerifyHTTPBodyTokenAcrossReads(t *testing.T) {
+	// A server that writes the token in tiny chunks so a single Read cannot
+	// capture it whole.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		for _, b := range []byte("proof@ariadne.id=abc123") {
+			_, _ = w.Write([]byte{b})
+		}
+	}))
+	defer srv.Close()
+
+	host := hostFromURL(srv.URL)
+	v := &Verifier{
+		HTTPClient: srv.Client(),
+		Resolver: &fakeResolver{ips: map[string][]net.IPAddr{
+			host: {{IP: net.ParseIP("93.184.216.34")}},
+		}},
+	}
+	res, err := v.Verify(context.Background(), &Claim{
+		Service:       "custom_url",
+		ClaimLocation: srv.URL,
+		ExpectedToken: "abc123",
+	})
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if res.Status != "verified" {
+		t.Fatalf("status = %s, want verified (token spans reads)", res.Status)
+	}
+}
+
 // TestVerifyUnsupportedService verifies an unsupported service errors.
 func TestVerifyUnsupportedService(t *testing.T) {
 	v := &Verifier{}
@@ -176,4 +210,49 @@ func TestIsBlockedIP(t *testing.T) {
 	if isBlockedIP(net.ParseIP("93.184.216.34")) {
 		t.Fatal("public IP should not be blocked")
 	}
+}
+
+// TestSafeRedirectBlocksPrivateTarget verifies a redirect to a private/
+// loopback address is rejected (audit D1): the initial URL is vetted, but a
+// 302 can point at 169.254.169.254 or 127.0.0.1, so every redirect hop must
+// be re-vetted for scheme + resolved IP.
+func TestSafeRedirectBlocksPrivateTarget(t *testing.T) {
+	resolver := &fakeResolver{ips: map[string][]net.IPAddr{
+		"public.example.com": {{IP: net.ParseIP("93.184.216.34")}},
+		"127.0.0.1":          {{IP: net.ParseIP("127.0.0.1")}},
+		"169.254.169.254":    {{IP: net.ParseIP("169.254.169.254")}},
+	}}
+
+	// Redirect to loopback -> blocked.
+	err := SafeRedirect(resolver)(&http.Request{URL: mustURL(t, "http://127.0.0.1/")}, nil)
+	if err == nil {
+		t.Fatal("redirect to loopback accepted, want error")
+	}
+
+	// Redirect to cloud metadata -> blocked.
+	err = SafeRedirect(resolver)(&http.Request{URL: mustURL(t, "http://169.254.169.254/latest/meta-data/")}, nil)
+	if err == nil {
+		t.Fatal("redirect to metadata accepted, want error")
+	}
+
+	// Redirect to a public host -> allowed.
+	err = SafeRedirect(resolver)(&http.Request{URL: mustURL(t, "http://public.example.com/next")}, nil)
+	if err != nil {
+		t.Fatalf("redirect to public host rejected: %v", err)
+	}
+
+	// Non-http scheme -> blocked.
+	err = SafeRedirect(resolver)(&http.Request{URL: mustURL(t, "file:///etc/passwd")}, nil)
+	if err == nil {
+		t.Fatal("redirect to file scheme accepted, want error")
+	}
+}
+
+func mustURL(t *testing.T, raw string) *url.URL {
+	t.Helper()
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return u
 }
