@@ -38,8 +38,9 @@ func (p *Prefixed) key(key string) (string, error) {
 			return "", ErrInvalidKey
 		}
 	}
-	// Reject NUL bytes (path.Join would pass them through to the FS).
-	if strings.ContainsRune(key, '\x00') {
+	// Reject NUL and other control characters (path.Join would pass them
+	// through to the FS).
+	if !validKey(key) {
 		return "", ErrInvalidKey
 	}
 	return path.Join(p.Prefix, key), nil

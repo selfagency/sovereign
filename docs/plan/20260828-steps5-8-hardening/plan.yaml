@@ -170,7 +170,7 @@ tasks:
     description: "D1: fs.go Put not crash-safe (no temp+rename+fsync), metadata write unsynced, Get ignores sidecar errors, List returns empty content types, ctx ignored. D2: fs.go + prefixed.go path traversal / symlink — path.Join keys, need filepath.Clean + prefix verify + os.OpenInRoot (Go 1.24+) + reject control chars."
     wave: 1
     agent: gem-implementer
-    status: pending
+    status: completed
     covers: [D1, D2]
     dependencies: []
     conflicts_with: []
