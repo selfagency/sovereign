@@ -11,6 +11,9 @@ import (
 
 // FS is a local-filesystem Backend. Keys map to paths under Root.
 // Safe for concurrent use: each operation opens its own file handle.
+//
+// All operations are scoped with os.Root (Go 1.24+) so a symlink planted
+// under Root cannot escape it for reads or writes.
 type FS struct {
 	Root string
 }
@@ -18,42 +21,129 @@ type FS struct {
 // ErrNotFound is returned when a key does not exist.
 var ErrNotFound = errors.New("storage: not found")
 
-func (f *FS) path(key string) string {
-	// Prevent path traversal: reject keys escaping Root.
-	clean := filepath.Clean("/" + key)
-	return filepath.Join(f.Root, clean)
+// validKey rejects empty keys and control characters (NUL, CR, LF, ...).
+func validKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, r := range key {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
 }
 
-// Put stores r under key, persisting contentType in a sidecar file.
+// relKey normalizes key to a slash-separated path relative to Root, with any
+// traversal cleaned away. os.Root still refuses to escape; this keeps the
+// on-disk layout stable.
+func relKey(key string) string {
+	return strings.TrimPrefix(filepath.ToSlash(filepath.Clean("/"+key)), "/")
+}
+
+// openRoot opens the FS root for scoped operations.
+func (f *FS) openRoot() (*os.Root, error) {
+	if err := os.MkdirAll(f.Root, 0o750); err != nil {
+		return nil, err
+	}
+	return os.OpenRoot(f.Root)
+}
+
+// ctxReader aborts a copy when ctx is canceled.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
+}
+
+// Put stores r under key, persisting contentType in a sidecar file. The write
+// is crash-safe: data goes to a temp file, is fsynced, then renamed into
+// place, so a crash never leaves a partial file at the key.
 func (f *FS) Put(ctx context.Context, key string, r io.Reader, contentType string) (Blob, error) {
-	p := f.path(key)
-	if err := os.MkdirAll(filepath.Dir(p), 0o750); err != nil {
+	if err := ctx.Err(); err != nil {
 		return Blob{}, err
 	}
-	fh, err := os.Create(p)
+	if !validKey(key) {
+		return Blob{}, ErrInvalidKey
+	}
+	root, err := f.openRoot()
 	if err != nil {
 		return Blob{}, err
 	}
-	n, err := io.Copy(fh, r)
-	if cerr := fh.Close(); err == nil {
-		err = cerr
+	defer func() { _ = root.Close() }()
+
+	rel := relKey(key)
+	if dir := filepath.Dir(rel); dir != "." {
+		if err := root.MkdirAll(dir, 0o750); err != nil {
+			return Blob{}, err
+		}
 	}
+	n, err := writeFileSync(root, rel, ctxReader{ctx: ctx, r: r})
 	if err != nil {
 		return Blob{}, err
 	}
-	// Persist content type in a sidecar file so Get can return it.
-	if err := os.WriteFile(p+".meta", []byte(contentType), 0o600); err != nil {
+	if _, err := writeFileSync(root, rel+".meta", strings.NewReader(contentType)); err != nil {
 		return Blob{}, err
 	}
 	return Blob{Key: key, ContentType: contentType, Size: n}, nil
 }
 
+// writeFileSync writes src to a temp file under root, fsyncs it, then renames
+// it onto name. Returns the number of bytes written.
+func writeFileSync(root *os.Root, name string, src io.Reader) (int64, error) {
+	tmp := name + ".tmp"
+	fh, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	if err != nil {
+		return 0, err
+	}
+	cleanup := func() {
+		_ = fh.Close()
+		_ = root.Remove(tmp)
+	}
+	n, err := io.Copy(fh, src)
+	if err != nil {
+		cleanup()
+		return 0, err
+	}
+	if err := fh.Sync(); err != nil {
+		cleanup()
+		return 0, err
+	}
+	if err := fh.Close(); err != nil {
+		_ = root.Remove(tmp)
+		return 0, err
+	}
+	if err := root.Rename(tmp, name); err != nil {
+		_ = root.Remove(tmp)
+		return 0, err
+	}
+	return n, nil
+}
+
 // Get returns the stored object for key.
 func (f *FS) Get(ctx context.Context, key string) (io.ReadCloser, Blob, error) {
-	p := f.path(key)
-	fh, err := os.Open(p)
+	if err := ctx.Err(); err != nil {
+		return nil, Blob{}, err
+	}
+	if !validKey(key) {
+		return nil, Blob{}, ErrInvalidKey
+	}
+	root, err := os.OpenRoot(f.Root)
 	if err != nil {
-		if os.IsNotExist(err) {
+		return nil, Blob{}, err
+	}
+	defer func() { _ = root.Close() }()
+
+	rel := relKey(key)
+	fh, err := root.Open(rel)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
 			return nil, Blob{}, ErrNotFound
 		}
 		return nil, Blob{}, err
@@ -63,48 +153,105 @@ func (f *FS) Get(ctx context.Context, key string) (io.ReadCloser, Blob, error) {
 		_ = fh.Close()
 		return nil, Blob{}, err
 	}
-	ct, _ := os.ReadFile(p + ".meta")
-	return fh, Blob{Key: key, ContentType: string(ct), Size: st.Size()}, nil
+	ct, err := readSidecar(root, rel)
+	if err != nil {
+		_ = fh.Close()
+		return nil, Blob{}, err
+	}
+	return fh, Blob{Key: key, ContentType: ct, Size: st.Size()}, nil
+}
+
+// readSidecar reads the content-type sidecar. A missing sidecar is not an
+// error (older blobs predate it); any other failure is surfaced.
+func readSidecar(root *os.Root, rel string) (string, error) {
+	b, err := root.ReadFile(rel + ".meta")
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+	return string(b), nil
 }
 
 // Delete removes the stored object for key.
 func (f *FS) Delete(ctx context.Context, key string) error {
-	p := f.path(key)
-	err := os.Remove(p)
-	if os.IsNotExist(err) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !validKey(key) {
+		return ErrInvalidKey
+	}
+	root, err := os.OpenRoot(f.Root)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+
+	rel := relKey(key)
+	err = root.Remove(rel)
+	if errors.Is(err, os.ErrNotExist) {
 		return ErrNotFound
 	}
 	// Best-effort removal of the sidecar metadata file.
-	_ = os.Remove(p + ".meta")
+	_ = root.Remove(rel + ".meta")
 	return err
 }
 
 // List returns all stored objects under prefix.
 func (f *FS) List(ctx context.Context, prefix string) ([]Blob, error) {
-	dir := filepath.Join(f.Root, filepath.Clean("/"+prefix))
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if !validKey(prefix) {
+		return nil, ErrInvalidKey
+	}
+	root, err := os.OpenRoot(f.Root)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+
+	dir := relKey(prefix)
 	var out []Blob
-	err := filepath.Walk(dir, func(p string, info os.FileInfo, err error) error {
+	walkErr := filepath.WalkDir(filepath.Join(f.Root, filepath.FromSlash(dir)), func(p string, d os.DirEntry, err error) error {
 		if err != nil {
-			if os.IsNotExist(err) {
+			if errors.Is(err, os.ErrNotExist) {
 				return nil // empty prefix
 			}
 			return err
 		}
-		if info.IsDir() {
+		if d.IsDir() {
 			return nil
 		}
-		if strings.HasSuffix(p, ".meta") {
-			return nil // skip content-type sidecar
+		// Never follow symlinks during a listing.
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		if strings.HasSuffix(p, ".meta") || strings.HasSuffix(p, ".tmp") {
+			return nil // sidecars and in-flight writes are not blobs
+		}
+		if err := ctx.Err(); err != nil {
+			return err
 		}
 		rel, err := filepath.Rel(f.Root, p)
 		if err != nil {
 			return err
 		}
-		out = append(out, Blob{Key: filepath.ToSlash(rel), Size: info.Size()})
+		rel = filepath.ToSlash(rel)
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		ct, err := readSidecar(root, rel)
+		if err != nil {
+			return err
+		}
+		out = append(out, Blob{Key: rel, ContentType: ct, Size: info.Size()})
 		return nil
 	})
-	if err != nil {
-		return nil, err
+	if walkErr != nil {
+		return nil, walkErr
 	}
 	return out, nil
 }
