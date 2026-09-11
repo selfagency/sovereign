@@ -141,6 +141,36 @@ func TestCSRFSameOrigin(t *testing.T) {
 	}
 }
 
+// TestCSRFSchemeMismatch verifies an http:// Origin against an https://
+// request is rejected (audit D5): sameOrigin must pin the scheme, not just the
+// host, so a downgraded Origin cannot pass behind a proxy.
+func TestCSRFSchemeMismatch(t *testing.T) {
+	h := cookiePrincipal().Middleware(okHandler())
+	req := withCSRFCookie(httptest.NewRequest(http.MethodPost, "https://example.com/data", http.NoBody), "tok")
+	req.Header.Set(csrfHeaderName, "tok")
+	req.Header.Set("Origin", "http://example.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403 (scheme mismatch)", rec.Code)
+	}
+}
+
+// TestCSRFSchemeMatchBehindProxy verifies an https Origin passes when the
+// request is https via X-Forwarded-Proto (proxy-terminated TLS).
+func TestCSRFSchemeMatchBehindProxy(t *testing.T) {
+	h := cookiePrincipal().Middleware(okHandler())
+	req := withCSRFCookie(httptest.NewRequest(http.MethodPost, "http://example.com/data", http.NoBody), "tok")
+	req.Header.Set(csrfHeaderName, "tok")
+	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("X-Forwarded-Proto", "https")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (proxy https)", rec.Code)
+	}
+}
+
 // TestCSRFSecFetchSiteCrossSite verifies Sec-Fetch-Site: cross-site is 403.
 func TestCSRFSecFetchSiteCrossSite(t *testing.T) {
 	h := cookiePrincipal().Middleware(okHandler())

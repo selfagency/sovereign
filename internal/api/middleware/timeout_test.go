@@ -3,6 +3,7 @@ package middleware
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -38,6 +39,14 @@ func TestTimeoutNormalKills(t *testing.T) {
 
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", rec.Code)
+	}
+	// The timeout response must be RFC 9457 problem+json, not a plain-text
+	// body (audit D4).
+	if ct := rec.Header().Get("Content-Type"); ct != "application/problem+json" {
+		t.Fatalf("content-type = %q, want application/problem+json", ct)
+	}
+	if !strings.Contains(rec.Body.String(), "service-unavailable") {
+		t.Fatalf("timeout body = %q, want problem+json", rec.Body.String())
 	}
 	if time.Since(start) > time.Second {
 		t.Fatal("slow handler was not killed promptly")
