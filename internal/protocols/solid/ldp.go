@@ -3,6 +3,7 @@ package solid
 import (
 	"bytes"
 	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -159,7 +160,8 @@ func (s *Server) handlePatch(w http.ResponseWriter, r *http.Request, backend sto
 	}
 	merged, err := applyNPatch(string(current), string(patch))
 	if err != nil {
-		http.Error(w, "invalid patch: "+err.Error(), http.StatusBadRequest)
+		slog.Error("solid: apply patch", "err", err)
+		http.Error(w, "invalid patch", http.StatusBadRequest)
 		return
 	}
 	if _, err := backend.Put(r.Context(), key, strings.NewReader(merged), "text/turtle"); err != nil {
