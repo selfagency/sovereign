@@ -97,29 +97,17 @@ func (h *Handler) InviteGet(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, "/panel", http.StatusSeeOther)
 }
 
-// createInviteSession redeems the invite token atomically, resolves the user,
-// rejects deleted users, and creates a server-side session row. It returns
-// the session and the raw (show-once) token.
+// createInviteSession redeems the invite token and creates the server-side
+// session in ONE transaction (audit C2): a session-insert failure rolls back
+// the redeem, so the one-time invite is not burned by a transient error. It
+// returns the session and the raw (show-once) token.
 func (h *Handler) createInviteSession(r *http.Request, raw string) (*store.Session, string, error) {
 	ctx := r.Context()
-	// Atomic single-use gate.
-	if err := h.store.RedeemInviteToken(ctx, hashToken(raw), time.Now()); err != nil {
-		return nil, "", err
-	}
-	it, err := h.store.InviteTokenByHash(ctx, hashToken(raw))
-	if err != nil {
-		return nil, "", err
-	}
-	// Reject tokens whose user was deleted: never mint a session for a
-	// non-existent subject.
-	if _, err := h.store.UserByID(ctx, it.UserID); err != nil {
-		return nil, "", store.ErrInviteInvalid
-	}
 	token, err := store.GenerateSessionToken()
 	if err != nil {
 		return nil, "", err
 	}
-	sess, err := h.store.CreateSession(ctx, it.UserID, store.HashSessionToken(token), sessionTTL, uaHash(r), ipHash(r))
+	sess, err := h.store.RedeemInviteAndCreateSession(ctx, hashToken(raw), store.HashSessionToken(token), sessionTTL, uaHash(r), ipHash(r))
 	if err != nil {
 		return nil, "", err
 	}
