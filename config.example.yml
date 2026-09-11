@@ -74,3 +74,12 @@ api:
 # (resolveHandle, getProfile) are served and data-plane methods return 501.
 # atproto:
 #   enabled: false
+
+# Initial backup schedule/destination. Seeds the persisted backup config on
+# first startup; the admin API (PUT /admin/backup/config) is the source of
+# truth afterwards. Empty values mean no scheduled backup until configured
+# via the API. Schedule is a cron expression; destination is fs or s3.
+# backup:
+#   schedule: "0 3 * * *"
+#   destination: fs
+#   prefix: backups

@@ -26,6 +26,7 @@ type Config struct {
 	Auth              AuthConfig    `yaml:"auth" mapstructure:"auth"`
 	API               APIConfig     `yaml:"api" mapstructure:"api"`
 	Atproto           AtprotoConfig `yaml:"atproto" mapstructure:"atproto"`
+	Backup            BackupConfig  `yaml:"backup" mapstructure:"backup"`
 }
 
 // StorageConfig configures the protocol blob backend.
@@ -49,6 +50,19 @@ type AtprotoConfig struct {
 	// false (default), the data-plane methods return 501 and only the public
 	// reads (resolveHandle, getProfile) are served.
 	Enabled bool `yaml:"enabled" mapstructure:"enabled"`
+}
+
+// BackupConfig is the initial backup schedule/destination. It seeds the
+// persisted backup config on first startup; the admin API (PUT
+// /admin/backup/config) is the source of truth afterwards. Empty values mean
+// no scheduled backup until one is configured via the API.
+type BackupConfig struct {
+	// Schedule is a cron expression (e.g. "0 3 * * *" for 3am daily).
+	Schedule string `yaml:"schedule" mapstructure:"schedule"`
+	// Destination is "fs" or "s3".
+	Destination string `yaml:"destination" mapstructure:"destination"`
+	// Prefix is the key prefix under which backups are stored.
+	Prefix string `yaml:"prefix" mapstructure:"prefix"`
 }
 
 // IPFSConfig configures the IPFS pinning broker.

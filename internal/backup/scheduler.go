@@ -108,7 +108,12 @@ type Scheduler struct {
 // NewScheduler builds a scheduler for a config.
 func NewScheduler(config Config, backupFn func(ctx context.Context) (io.Reader, error)) *Scheduler {
 	return &Scheduler{
-		cron:     cron.New(cron.WithSeconds()),
+		// Accept both conventional 5-field cron ("0 3 * * *") and 6-field
+		// with seconds ("* * * * * *"), so operators can use standard cron
+		// expressions while tests can fire every second.
+		cron: cron.New(cron.WithParser(cron.NewParser(
+			cron.SecondOptional | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor,
+		))),
 		config:   config,
 		BackupFn: backupFn,
 	}

@@ -316,6 +316,21 @@ func (h *Handler) currentScheduler() *backup.Scheduler {
 	return h.sched
 }
 
+// StartFromPersisted loads the persisted backup config (if any) and starts the
+// scheduler from it. It is the startup path: an operator who saved a config
+// gets the schedule running after a restart without re-saving it. No config
+// persisted yet is not an error (the scheduler starts on the first PUT).
+func (h *Handler) StartFromPersisted(ctx context.Context) error {
+	cfg, err := h.store.GetBackupConfig(ctx)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return h.restartScheduler(cfg.Schedule, cfg.Destination, cfg.Prefix)
+}
+
 // restartScheduler stops the current scheduler and starts a new one built from
 // the persisted config. It is the A3 fix: the config genuinely drives the
 // scheduler rather than only being logged.

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -425,10 +426,16 @@ func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, erro
 	// sub-handler builds its own strict SSRF-safe default.
 	sh := self.New(s.store, s.blobs, nil, s.logger)
 
+	// Backup producer: a gzip tar of the data dir, streamed to the scheduler's
+	// destination. The scheduler is started from any persisted config below.
+	backupFn := func(ctx context.Context) (io.Reader, error) {
+		return produceBackup(ctx, s.cfg.DataDir)
+	}
+
 	// Admin handler for the /admin/* instance-admin routes. The ipfsBackend
 	// and s.mailer are resolved earlier in New; pass them through so the
 	// admin users (invite email) and IPFS handlers work.
-	adm := v1admin.New(s.store, s.logger, nil, nil, s.blobs, capProvider, &v1system.Info{
+	adm := v1admin.New(s.store, s.logger, nil, backupFn, s.blobs, capProvider, &v1system.Info{
 		Domain:            s.cfg.Domain,
 		Audience:          s.cfg.Audience,
 		DataDir:           s.cfg.DataDir,
@@ -440,6 +447,26 @@ func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, erro
 		SMTPFrom:          s.cfg.SMTP.From,
 		APICORSOrigins:    s.cfg.API.CORSOrigins,
 	}, s.mailer, "https://id."+s.cfg.Domain, s.ipfsBackend)
+
+	// Start the backup scheduler from any persisted config (no-op when none
+	// has been saved yet). A bad persisted schedule must not brick startup:
+	// log and continue; the admin can fix it via PUT /admin/backup/config.
+	if err := adm.Backup.StartFromPersisted(context.Background()); err != nil {
+		s.logger.Error("backup: start persisted scheduler", "err", err)
+	}
+
+	// Seed the persisted config from the file config on first startup (no
+	// config saved via the API yet). The API remains the source of truth
+	// afterwards.
+	if _, err := s.store.GetBackupConfig(context.Background()); errors.Is(err, store.ErrNotFound) {
+		if s.cfg.Backup.Schedule != "" && s.cfg.Backup.Destination != "" && s.cfg.Backup.Prefix != "" {
+			if err := s.store.UpsertBackupConfig(context.Background(), s.cfg.Backup.Schedule, s.cfg.Backup.Destination, s.cfg.Backup.Prefix); err != nil {
+				s.logger.Error("backup: seed config", "err", err)
+			} else if err := adm.Backup.StartFromPersisted(context.Background()); err != nil {
+				s.logger.Error("backup: start seeded scheduler", "err", err)
+			}
+		}
+	}
 
 	// Public handler for the anonymous /api/v1/public/* routes (published
 	// profile, keys, verified proofs). Tenant comes from the request context.
