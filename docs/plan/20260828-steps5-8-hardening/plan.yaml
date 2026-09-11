@@ -433,7 +433,7 @@ tasks:
     description: "A3: Backup config is a no-op (Apply just logs, returns 200 'saved'). Scheduler never constructed. Wire: re-add backup.* config (schedule, destination, prefix), persist config, construct Destination (FS/S3), start Scheduler, surface Status. Depends on crash-safe storage (T2/T3) and S3 secure (T4)."
     wave: 3
     agent: gem-implementer
-    status: pending
+    status: completed
     covers: [A3, C1]
     dependencies: [T2, T3, T4]
     conflicts_with: [T6, T7, T8, T9, T10, T11]
