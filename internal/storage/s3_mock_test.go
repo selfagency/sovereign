@@ -65,8 +65,8 @@ func mockS3Server(t *testing.T) *httptest.Server {
 				buckets[bucket] = map[string][]byte{}
 			}
 			if r.URL.Query().Get("partNumber") != "" {
-				// Multipart part upload: store content, return ETag.
-				buckets[bucket][key] = body
+				// Multipart part upload: store decoded content, return ETag.
+				buckets[bucket][key] = decodeChunked(body)
 				w.Header().Set("ETag", `"etag-1"`)
 				w.WriteHeader(http.StatusOK)
 				return
@@ -76,17 +76,20 @@ func mockS3Server(t *testing.T) *httptest.Server {
 			buckets[bucket][key] = decodeChunked(body)
 			w.WriteHeader(http.StatusOK)
 		case http.MethodPost:
-			// Multipart upload initiation: POST /bucket/key?uploads=
-			if r.URL.Query().Get("uploads") != "" {
+			// Multipart upload initiation: POST /bucket/key?uploads (bare
+			// query param, no value).
+			if r.URL.Query().Has("uploads") {
 				w.Header().Set("Content-Type", "application/xml")
 				w.Write([]byte(`<?xml version="1.0"?><InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>`))
 				return
 			}
-			// Complete multipart upload: POST /bucket/key?uploadId=
+			// Complete multipart upload: POST /bucket/key?uploadId=...
 			// Content was already stored during the part upload; just confirm.
-			if r.URL.Query().Get("uploadId") != "" {
+			if r.URL.Query().Has("uploadId") {
 				w.Header().Set("Content-Type", "application/xml")
-				w.Write([]byte(`<?xml version="1.0"?><CompleteMultipartUploadResult><Key>` + key + `</Key></CompleteMultipartUploadResult>`))
+				// minio-go requires Bucket to be populated; an empty Bucket
+				// makes it re-parse the body as an error response.
+				w.Write([]byte(`<?xml version="1.0"?><CompleteMultipartUploadResult><Bucket>` + bucket + `</Bucket><Key>` + key + `</Key><ETag>"etag-complete"</ETag></CompleteMultipartUploadResult>`))
 				return
 			}
 			http.Error(w, "unsupported post", http.StatusBadRequest)
@@ -195,12 +198,11 @@ func TestS3BackendAgainstMock(t *testing.T) {
 	cfg := S3Config{
 		Endpoint:  srv.URL[7:], // strip http://
 		Bucket:    "test",
-		AccessKey: "minioadmin",
-		SecretKey: "minioadmin",
-		Region:    "us-east-1",
-		Secure:    false,
+		AccessKey: "minioadmin", SecretKey: "minioadmin",
+		Region: "us-east-1", Secure: false,
+		CreateBucket: true,
 	}
-	s, err := NewS3(&cfg)
+	s, err := NewS3(context.Background(), &cfg)
 	if err != nil {
 		t.Fatalf("NewS3: %v", err)
 	}

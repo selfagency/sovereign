@@ -200,7 +200,7 @@ tasks:
     description: "D3: s3.go Put buffers entire object in memory (io.ReadAll before PutObject) — stream with size=-1 or enforce MaxBytesReader. D4: NewS3 does network I/O + bucket creation during construction with context.Background(), no timeout — accept ctx, dial timeout, opt-in bucket creation."
     wave: 1
     agent: gem-implementer
-    status: pending
+    status: completed
     covers: [D3, D4]
     dependencies: []
     conflicts_with: [T4]
