@@ -283,7 +283,7 @@ func TestSQLiteTenantStore(t *testing.T) {
 // real constructor does a live bucket probe).
 func TestBuildBlobBackendS3(t *testing.T) {
 	orig := newS3Backend
-	newS3Backend = func(cfg *Config) (storage.Backend, error) {
+	newS3Backend = func(ctx context.Context, cfg *Config) (storage.Backend, error) {
 		return &storage.FS{Root: t.TempDir()}, nil
 	}
 	defer func() { newS3Backend = orig }()

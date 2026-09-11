@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"os"
 	"testing"
 )
@@ -35,7 +36,7 @@ func TestS3Contract(t *testing.T) {
 	}
 
 	RunContractTests(t, func() Backend {
-		s, err := NewS3(&cfg)
+		s, err := NewS3(context.Background(), &cfg)
 		if err != nil {
 			t.Fatalf("NewS3: %v", err)
 		}

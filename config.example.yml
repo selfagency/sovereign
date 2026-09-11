@@ -17,6 +17,7 @@ data_dir: ./data
 #   s3:  any S3-compatible endpoint
 storage:
   backend: fs
+  # s3:  any S3-compatible endpoint. The bucket must already exist.
   # s3:
   #   endpoint: https://s3.example.com
   #   bucket: sovereign-blobs
