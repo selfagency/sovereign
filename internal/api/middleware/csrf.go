@@ -61,7 +61,10 @@ func (c *CSRF) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// sameOrigin enforces Origin and Sec-Fetch-Site on unsafe requests.
+// sameOrigin enforces Origin and Sec-Fetch-Site on unsafe requests. The
+// Origin scheme must match the request's scheme (audit D5): comparing only the
+// host would let an http:// Origin pass against an https:// request behind a
+// proxy that forwards X-Forwarded-Proto.
 func sameOrigin(r *http.Request) bool {
 	if sfs := r.Header.Get("Sec-Fetch-Site"); sfs == "cross-site" {
 		return false
@@ -74,7 +77,23 @@ func sameOrigin(r *http.Request) bool {
 	if err != nil {
 		return false
 	}
-	return u.Host == r.Host
+	if u.Host != r.Host {
+		return false
+	}
+	return u.Scheme == requestScheme(r)
+}
+
+// requestScheme returns the effective scheme of the request: https when TLS is
+// terminated at this server, otherwise the X-Forwarded-Proto header (trusted
+// only for the scheme comparison; the header itself is set by the proxy).
+func requestScheme(r *http.Request) string {
+	if r.TLS != nil {
+		return "https"
+	}
+	if proto := r.Header.Get("X-Forwarded-Proto"); proto == "https" {
+		return "https"
+	}
+	return "http"
 }
 
 // validToken enforces the double-submit check: the cookie must be present and

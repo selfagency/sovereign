@@ -448,9 +448,11 @@ func (s *Server) apiHandler(waHandler *auth.WebAuthnHandler) (http.Handler, erro
 		BodyLimit:     middleware.DefaultMaxBodyBytes,
 	})
 	// The rate limiter owns its own prune goroutine (created outside the
-	// chain), so Close must stop both the chain and the limiter.
+	// chain), so Close must stop both the chain and the limiter, plus the
+	// self-service sub-handlers' background workers (proofs verification).
 	s.apiClose = func() {
 		life.Close()
+		sh.Close()
 		if rl != nil {
 			rl.Close()
 		}

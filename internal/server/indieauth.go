@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rsa"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -19,6 +20,14 @@ type indieauthIssuer struct {
 	key      *rsa.PrivateKey
 	issuer   string
 	audience string
+}
+
+// internalError logs the real error server-side and returns a stable, generic
+// message to the client. Raw internal errors must never reach the response
+// body (security audit B1).
+func internalError(w http.ResponseWriter, op string, err error) {
+	slog.Error(op, "err", err)
+	http.Error(w, "internal error", http.StatusInternalServerError)
 }
 
 // IssueForProfile mints an access token for an IndieAuth identity URL.
@@ -69,7 +78,8 @@ func indieAuthAuthorize(b *ia.Bridge, sessions *indieAuthSessionStore) http.Hand
 	return func(w http.ResponseWriter, r *http.Request) {
 		authReq, err := b.ParseAuthorization(r)
 		if err != nil {
-			http.Error(w, "invalid authorization request: "+err.Error(), http.StatusBadRequest)
+			slog.Error("indieauth: parse authorization", "err", err)
+			http.Error(w, "invalid authorization request", http.StatusBadRequest)
 			return
 		}
 		sessions.put(authReq.State, authReq)
@@ -84,7 +94,8 @@ func indieAuthAuthorize(b *ia.Bridge, sessions *indieAuthSessionStore) http.Hand
 func indieAuthToken(b *ia.Bridge, sessions *indieAuthSessionStore) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil {
-			http.Error(w, "bad form: "+err.Error(), http.StatusBadRequest)
+			slog.Error("indieauth: parse form", "err", err)
+			http.Error(w, "bad form", http.StatusBadRequest)
 			return
 		}
 		state := r.FormValue("code")
@@ -94,7 +105,8 @@ func indieAuthToken(b *ia.Bridge, sessions *indieAuthSessionStore) http.HandlerF
 			return
 		}
 		if err := b.ValidateTokenExchange(authReq, r); err != nil {
-			http.Error(w, "invalid token exchange: "+err.Error(), http.StatusBadRequest)
+			slog.Error("indieauth: validate token exchange", "err", err)
+			http.Error(w, "invalid token exchange", http.StatusBadRequest)
 			return
 		}
 		// The identity URL is the 'me' form value on the token exchange.
@@ -105,7 +117,7 @@ func indieAuthToken(b *ia.Bridge, sessions *indieAuthSessionStore) http.HandlerF
 		}
 		tok, err := b.IssueToken(r.Context(), me, authReq.Scopes)
 		if err != nil {
-			http.Error(w, "token issuance failed: "+err.Error(), http.StatusInternalServerError)
+			internalError(w, "indieauth: issue token", err)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")

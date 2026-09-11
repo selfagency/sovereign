@@ -63,3 +63,12 @@ func TestResolveHandleInvalid(t *testing.T) {
 		t.Fatal("expected error for invalid handle")
 	}
 }
+
+// TestResolveHandleToDIDLookupError verifies ResolveHandleToDID surfaces a
+// lookup failure for a well-formed but unresolvable handle.
+func TestResolveHandleToDIDLookupError(t *testing.T) {
+	dir := NewDirectory()
+	if _, err := dir.ResolveHandleToDID(context.Background(), "nonexistent.example.com"); err == nil {
+		t.Fatal("expected error for unresolvable handle")
+	}
+}

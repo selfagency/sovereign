@@ -50,3 +50,9 @@ func New(st *store.Store, blobs storage.Backend, verifier *proofs.Verifier, logg
 		Credentials: credentials.New(st, logger),
 	}
 }
+
+// Close stops the self-service sub-handlers' background goroutines (the
+// proofs verification worker).
+func (h *Handler) Close() {
+	h.Proofs.Close()
+}

@@ -305,6 +305,27 @@ func TestPatchDeleteData(t *testing.T) {
 	}
 }
 
+// TestPatchInvalidSyntax proves a malformed SPARQL patch returns 400 (audit
+// B1: the raw parse error is logged, not returned to the client).
+func TestPatchInvalidSyntax(t *testing.T) {
+	srv, _ := newTestServer(t)
+	h := withTenant(srv, "alice.example.com")
+	seedTTL(t, h, "docs/note.ttl", "@prefix dc: <http://purl.org/dc/terms/>.\n<> dc:title \"Old\".")
+
+	patch := `DELETE WHERE { <> <http://purl.org/dc/terms/title> "Old" }` // unsupported op
+	req := httptest.NewRequest("PATCH", "/docs/note.ttl", strings.NewReader(patch))
+	req.Host = "alice.example.com"
+	req.Header.Set("Content-Type", "application/sparql-update")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("PATCH invalid = %d, want 400 (body %q)", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "parse") || strings.Contains(rec.Body.String(), "error") {
+		t.Fatalf("PATCH invalid leaked raw error: %q", rec.Body.String())
+	}
+}
+
 // TestPatchUnsupportedMediaType proves non-RDF patch bodies are rejected.
 func TestPatchUnsupportedMediaType(t *testing.T) {
 	srv, _ := newTestServer(t)

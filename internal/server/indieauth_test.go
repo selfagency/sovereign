@@ -119,6 +119,61 @@ func TestIndieAuthTokenMissingMe(t *testing.T) {
 	}
 }
 
+// TestIndieAuthTokenParseFormError proves a malformed form body returns 400.
+func TestIndieAuthTokenParseFormError(t *testing.T) {
+	b := ia.NewBridge(true, &fakeIssuer{})
+	h := indieAuthToken(b, newIndieAuthSessionStore())
+	rec := httptest.NewRecorder()
+	// Invalid form encoding (bad percent-escape) -> ParseForm error.
+	req := httptest.NewRequest(http.MethodPost, "/indieauth/token", strings.NewReader("%zz"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
+// TestIndieAuthTokenValidateExchangeError proves a failed token-exchange
+// validation returns 400.
+func TestIndieAuthTokenValidateExchangeError(t *testing.T) {
+	b := ia.NewBridge(true, &fakeIssuer{})
+	sessions := newIndieAuthSessionStore()
+
+	// Seed a session with a state that will fail ValidateTokenExchange: the
+	// bridge requires the client_id/redirect_uri to match the authorization
+	// request, so send a mismatched client_id.
+	verifier, challenge := pkcePair()
+	authParams := url.Values{}
+	authParams.Set("response_type", "code")
+	authParams.Set("client_id", "https://app.example.com/app")
+	authParams.Set("redirect_uri", "https://app.example.com/cb")
+	authParams.Set("state", "code1")
+	authParams.Set("me", "https://alice.example.com/profile")
+	authParams.Set("code_challenge", challenge)
+	authParams.Set("code_challenge_method", "S256")
+	authReq, err := b.ParseAuthorization(httptest.NewRequest(http.MethodGet, "/indieauth/auth?"+authParams.Encode(), http.NoBody))
+	if err != nil {
+		t.Fatalf("ParseAuthorization: %v", err)
+	}
+	sessions.put("code1", authReq)
+
+	h := indieAuthToken(b, sessions)
+	rec := httptest.NewRecorder()
+	form := url.Values{}
+	form.Set("grant_type", "authorization_code")
+	form.Set("code", "code1")
+	form.Set("client_id", "https://evil.example.com/app") // mismatch
+	form.Set("redirect_uri", "https://app.example.com/cb")
+	form.Set("me", "https://alice.example.com/profile")
+	form.Set("code_verifier", verifier)
+	req := httptest.NewRequest(http.MethodPost, "/indieauth/token", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+}
+
 // TestIndieAuthTokenIssuanceError proves a token-issuance failure returns 500.
 func TestIndieAuthTokenIssuanceError(t *testing.T) {
 	b := ia.NewBridge(true, &fakeIssuer{err: errors.New("mint failed")})

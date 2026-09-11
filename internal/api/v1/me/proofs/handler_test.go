@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/selfagency/sovereign/internal/api/dto"
 	"github.com/selfagency/sovereign/internal/api/middleware"
@@ -108,13 +109,31 @@ func (f fakeResolver) LookupTXT(_ context.Context, name string) ([]string, error
 	return nil, errors.New("no txt")
 }
 
-func newHandler(s *store.Store, v *proofs.Verifier) *v1proofs.Handler {
-	return v1proofs.New(s, v, slog.New(slog.NewTextHandler(io.Discard, nil)))
+func newHandler(t *testing.T, s *store.Store, v *proofs.Verifier) *v1proofs.Handler {
+	h := v1proofs.New(s, v, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	t.Cleanup(h.Close)
+	return h
+}
+
+// waitStatus polls the store until the claim reaches want (the background
+// verification worker persists asynchronously, audit D2).
+func waitStatus(t *testing.T, s *store.Store, tenantID, id, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		c, err := s.GetProofClaim(context.Background(), tenantID, id)
+		if err == nil && c.Status == want {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c, _ := s.GetProofClaim(context.Background(), tenantID, id)
+	t.Fatalf("claim %s status = %v, want %s", id, c.Status, want)
 }
 
 func TestListProofs(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	seedClaim(t, s, u, "p1")
 	seedClaimAt(t, s, u, "p2", "github_gist", "https://gist.github.com/alice")
@@ -134,7 +153,7 @@ func TestListProofs(t *testing.T) {
 
 func TestListProofsEmpty(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	rec := do(h.List, req(http.MethodGet, "/api/v1/me/proofs", principal(u.ID, u.TenantID)))
 	if rec.Code != http.StatusOK {
@@ -148,7 +167,7 @@ func TestListProofsEmpty(t *testing.T) {
 
 func TestListProofsUnauthenticated(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	rec := do(h.List, req(http.MethodGet, "/api/v1/me/proofs", nil))
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("unauthenticated = %d, want 401", rec.Code)
@@ -157,7 +176,7 @@ func TestListProofsUnauthenticated(t *testing.T) {
 
 func TestGetProof(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	seedClaim(t, s, u, "p1")
 
@@ -173,7 +192,7 @@ func TestGetProof(t *testing.T) {
 
 func TestGetProofNotFound(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	rec := do(h.Get, req(http.MethodGet, "/api/v1/me/proofs/missing", principal(u.ID, u.TenantID)))
 	if rec.Code != http.StatusNotFound {
@@ -183,7 +202,7 @@ func TestGetProofNotFound(t *testing.T) {
 
 func TestCreateProof(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	body := `{"anchor_type":"did","anchor_value":"did:plc:x","service":"dns","claim_location":"_atproto.example.com","expected_token":"did:plc:x"}`
 	r := req(http.MethodPost, "/api/v1/me/proofs", principal(u.ID, u.TenantID))
@@ -207,7 +226,7 @@ func TestCreateProof(t *testing.T) {
 
 func TestCreateProofValidation(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 
 	cases := []struct {
@@ -235,7 +254,7 @@ func TestCreateProofValidation(t *testing.T) {
 
 func TestCreateProofDuplicate(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	seedClaim(t, s, u, "p1")
 	// Same service + claim_location as the seeded claim -> duplicate.
@@ -251,7 +270,7 @@ func TestCreateProofDuplicate(t *testing.T) {
 
 func TestDeleteProof(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	seedClaim(t, s, u, "p1")
 
@@ -266,7 +285,7 @@ func TestDeleteProof(t *testing.T) {
 
 func TestDeleteProofNotFound(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	rec := do(h.Delete, req(http.MethodDelete, "/api/v1/me/proofs/missing", principal(u.ID, u.TenantID)))
 	if rec.Code != http.StatusNotFound {
@@ -284,16 +303,18 @@ func TestVerifyProofDNS(t *testing.T) {
 	v := &proofs.Verifier{Resolver: &stubTXTResolver{txts: map[string][]string{
 		"_atproto.example.com": {"did=did:plc:x"},
 	}}}
-	h := newHandler(s, v)
+	h := newHandler(t, s, v)
 
 	rec := do(h.Verify, req(http.MethodPost, "/api/v1/me/proofs/p1/verify", principal(u.ID, u.TenantID)))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("verify = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("verify = %d, want 202 (body %s)", rec.Code, rec.Body.String())
 	}
 	got := decode[dto.ProofClaim](t, rec)
-	if got.Status != "verified" {
-		t.Fatalf("verify status = %q, want verified", got.Status)
+	if got.Status != "pending" {
+		t.Fatalf("verify response status = %q, want pending", got.Status)
 	}
+	// The background worker persists the outcome asynchronously.
+	waitStatus(t, s, u.TenantID, "p1", "verified")
 	persisted, err := s.GetProofClaim(context.Background(), u.TenantID, "p1")
 	if err != nil || persisted.Status != "verified" {
 		t.Fatalf("persisted: err=%v claim=%+v", err, persisted)
@@ -303,7 +324,7 @@ func TestVerifyProofDNS(t *testing.T) {
 // TestVerifyProofNotFound verifies a missing claim returns 404.
 func TestVerifyProofNotFound(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	rec := do(h.Verify, req(http.MethodPost, "/api/v1/me/proofs/missing/verify", principal(u.ID, u.TenantID)))
 	if rec.Code != http.StatusNotFound {
@@ -336,7 +357,7 @@ func TestVerifyProofSSRFNegative(t *testing.T) {
 					host: {{IP: net.ParseIP(hostIP(loc))}},
 				}},
 			}
-			h := newHandler(s, v)
+			h := newHandler(t, s, v)
 			seedClaim(t, s, u, "p1")
 			// Point the claim at the blocked location.
 			if err := s.UpdateProofClaimStatus(context.Background(), u.TenantID, "p1", "pending", ""); err != nil {
@@ -346,13 +367,15 @@ func TestVerifyProofSSRFNegative(t *testing.T) {
 			updateClaimLocation(t, s, u.TenantID, "p1", loc)
 
 			rec := do(h.Verify, req(http.MethodPost, "/api/v1/me/proofs/p1/verify", principal(u.ID, u.TenantID)))
-			if rec.Code != http.StatusOK {
-				t.Fatalf("verify = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+			if rec.Code != http.StatusAccepted {
+				t.Fatalf("verify = %d, want 202 (body %s)", rec.Code, rec.Body.String())
 			}
 			got := decode[dto.ProofClaim](t, rec)
-			if got.Status != "failed" {
-				t.Fatalf("status = %q, want failed (SSRF guard did not fire)", got.Status)
+			if got.Status != "pending" {
+				t.Fatalf("status = %q, want pending (SSRF guard fires in background)", got.Status)
 			}
+			// The background worker persists the SSRF failure.
+			waitStatus(t, s, u.TenantID, "p1", "failed")
 			persisted, err := s.GetProofClaim(context.Background(), u.TenantID, "p1")
 			if err != nil || persisted.Status != "failed" {
 				t.Fatalf("persisted: err=%v claim=%+v", err, persisted)
@@ -377,15 +400,18 @@ func TestVerifyProofSSRFPublicAllowed(t *testing.T) {
 			"example.com": {{IP: net.ParseIP("93.184.216.34")}},
 		}},
 	}
-	h := newHandler(s, v)
+	h := newHandler(t, s, v)
 	rec := do(h.Verify, req(http.MethodPost, "/api/v1/me/proofs/p1/verify", principal(u.ID, u.TenantID)))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("verify = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("verify = %d, want 202 (body %s)", rec.Code, rec.Body.String())
 	}
 	got := decode[dto.ProofClaim](t, rec)
-	if got.Status != "failed" {
-		t.Fatalf("status = %q, want failed (token absent)", got.Status)
+	if got.Status != "pending" {
+		t.Fatalf("status = %q, want pending", got.Status)
 	}
+	// The background worker attempts the fetch and persists the failure
+	// (token absent).
+	waitStatus(t, s, u.TenantID, "p1", "failed")
 }
 
 // TestCrossTenantIsolation verifies a tenant A principal cannot read or write
@@ -393,7 +419,7 @@ func TestVerifyProofSSRFPublicAllowed(t *testing.T) {
 // B's claims are unreachable (404).
 func TestCrossTenantIsolation(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	a := seedTenantUser(t, s, "tenant-a", "alice")
 	b := seedTenantUser(t, s, "tenant-b", "bob")
 	seedClaim(t, s, b, "b1")
@@ -492,7 +518,7 @@ func TestNewNilLogger(t *testing.T) {
 // TestCreateProofInvalidBody verifies a malformed create body is a 400.
 func TestCreateProofInvalidBody(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	r := req(http.MethodPost, "/api/v1/me/proofs", principal(u.ID, u.TenantID))
 	r.Body = io.NopCloser(strings.NewReader(`{`))
@@ -507,7 +533,7 @@ func TestCreateProofInvalidBody(t *testing.T) {
 // not-found) surfaces as a 500.
 func TestSelfInternalError(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	ctx = middleware.WithPrincipal(ctx, principal("u1", "tenant-a"))
@@ -527,7 +553,7 @@ func TestVerifyUpdateStatusError(t *testing.T) {
 	v := &proofs.Verifier{Resolver: &stubTXTResolver{txts: map[string][]string{
 		"_atproto.example.com": {"did=did:plc:x"},
 	}}}
-	h := newHandler(s, v)
+	h := newHandler(t, s, v)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	ctx = middleware.WithPrincipal(ctx, principal(u.ID, u.TenantID))
@@ -538,10 +564,19 @@ func TestVerifyUpdateStatusError(t *testing.T) {
 	}
 }
 
+// TestCloseIdempotent verifies Close can be called twice (worker already
+// stopped path).
+func TestCloseIdempotent(t *testing.T) {
+	s := testStore(t)
+	h := newHandler(t, s, nil)
+	h.Close()
+	h.Close() // second call hits the already-closed branch
+}
+
 // TestIDFromPathEmpty verifies an empty path segment yields a 404.
 func TestIDFromPathEmpty(t *testing.T) {
 	s := testStore(t)
-	h := newHandler(s, nil)
+	h := newHandler(t, s, nil)
 	u := seedTenantUser(t, s, "tenant-a", "alice")
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/me/proofs/", http.NoBody)
 	r = withPrincipal(r, principal(u.ID, u.TenantID))

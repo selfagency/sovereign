@@ -497,6 +497,95 @@ func (s *Store) RedeemInviteToken(ctx context.Context, tokenHash string, now tim
 	return ErrInviteInvalid
 }
 
+// RedeemInviteAndCreateSession redeems a single-use invite token and creates
+// the session row in ONE transaction (audit C2): if the session insert fails
+// (e.g. the invite's user was deleted), the redeem rolls back and the invite
+// stays redeemable. The redeem UPDATE is the authoritative single-use gate;
+// the session INSERT commits only when both succeed.
+func (s *Store) RedeemInviteAndCreateSession(ctx context.Context, tokenHash, sessionTokenHash string, ttl time.Duration, uaHash, ipHash string) (*Session, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("store: redeem invite begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now()
+	res, err := tx.ExecContext(ctx,
+		`UPDATE invite_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?`,
+		now, tokenHash, now)
+	if err != nil {
+		return nil, fmt.Errorf("store: redeem invite token: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("store: redeem invite token: %w", err)
+	}
+	if n != 1 {
+		return nil, classifyInviteRedeem(ctx, tx, tokenHash, now)
+	}
+
+	lastSeen := now
+	sess := &Session{
+		ID:            NewSessionID(),
+		UserID:        "", // filled after the user lookup below
+		TokenHash:     sessionTokenHash,
+		CreatedAt:     now,
+		LastSeenAt:    &lastSeen,
+		ExpiresAt:     now.Add(ttl),
+		UserAgentHash: uaHash,
+		IPHash:        ipHash,
+	}
+	// Resolve the invite's user inside the transaction so a deleted user rolls
+	// back the redeem.
+	var userID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT user_id FROM invite_tokens WHERE token_hash = ?`, tokenHash).Scan(&userID); err != nil {
+		return nil, ErrInviteInvalid
+	}
+	var exists int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM users WHERE id = ?`, userID).Scan(&exists); err != nil {
+		return nil, fmt.Errorf("store: redeem invite user check: %w", err)
+	}
+	if exists == 0 {
+		return nil, ErrInviteInvalid
+	}
+	sess.UserID = userID
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO sessions (id, user_id, token_hash, created_at, last_seen_at, expires_at, revoked_at, user_agent_hash, ip_hash)
+		 VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`,
+		sess.ID, sess.UserID, sess.TokenHash, sess.CreatedAt, sess.LastSeenAt, sess.ExpiresAt,
+		nullableString(sess.UserAgentHash), nullableString(sess.IPHash)); err != nil {
+		return nil, fmt.Errorf("store: create session: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("store: redeem invite commit: %w", err)
+	}
+	return sess, nil
+}
+
+// classifyInviteRedeem maps a failed single-use redeem to the classified
+// error. It reads inside the tx to avoid a second connection blocking on the
+// uncommitted UPDATE (same semantics as RedeemInviteToken).
+func classifyInviteRedeem(ctx context.Context, tx *sql.Tx, tokenHash string, now time.Time) error {
+	var used sql.NullTime
+	var expiresAt time.Time
+	err := tx.QueryRowContext(ctx,
+		`SELECT used_at, expires_at FROM invite_tokens WHERE token_hash = ?`, tokenHash).Scan(&used, &expiresAt)
+	if err != nil {
+		return ErrInviteInvalid
+	}
+	if used.Valid {
+		return ErrInviteUsed
+	}
+	if now.After(expiresAt) {
+		return ErrInviteExpired
+	}
+	return ErrInviteInvalid
+}
+
 // CreateClient inserts an OIDC client. The secret is stored as an argon2id
 // hash, never plaintext, and is capped at maxClientSecretLen bytes.
 func (s *Store) CreateClient(ctx context.Context, c *Client) error {

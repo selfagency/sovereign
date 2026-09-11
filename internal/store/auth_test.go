@@ -750,6 +750,97 @@ func TestInviteTokenConcurrentRedemption(t *testing.T) {
 	}
 }
 
+// TestRedeemInviteAndCreateSessionAtomic verifies the redeem + session create
+// are one transaction (audit C2): a session-insert failure must roll back the
+// redeem so the invite stays redeemable. The failure is a duplicate session
+// token hash (UNIQUE constraint on sessions.token_hash) — a transient error
+// that must not burn the invite.
+func TestRedeemInviteAndCreateSessionAtomic(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, &User{ID: "u1", TenantID: "t1", Handle: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+	hash := "atomichash"
+	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "inv1", TokenHash: hash, UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Happy path: redeem + session succeed together.
+	sess, err := s.RedeemInviteAndCreateSession(ctx, hash, "tokhash", time.Hour, "", "")
+	if err != nil {
+		t.Fatalf("redeem+create: %v", err)
+	}
+	if sess.UserID != "u1" {
+		t.Fatalf("session user = %q, want u1", sess.UserID)
+	}
+	// Invite is consumed.
+	if err := s.RedeemInviteToken(ctx, hash, time.Now()); !errors.Is(err, ErrInviteUsed) {
+		t.Fatalf("second redeem = %v, want ErrInviteUsed", err)
+	}
+
+	// Failure path: session insert fails (duplicate token hash) -> redeem
+	// rolls back and the invite stays redeemable.
+	hash2 := "atomic2hash"
+	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "inv2", TokenHash: hash2, UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	// Pre-insert a session with the same token hash to force the UNIQUE
+	// violation on the second insert.
+	if _, err := s.CreateSession(ctx, "u1", "duptok", time.Hour, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RedeemInviteAndCreateSession(ctx, hash2, "duptok", time.Hour, "", ""); err == nil {
+		t.Fatal("redeem+create with duplicate token hash succeeded, want error")
+	}
+	// Invite must still be redeemable (rollback preserved it).
+	if err := s.RedeemInviteToken(ctx, hash2, time.Now()); err != nil {
+		t.Fatalf("redeem after failed create = %v, want success (rollback)", err)
+	}
+}
+
+// TestRedeemInviteAndCreateSessionClassification verifies the n != 1
+// classification paths (used, expired, invalid) map to distinct errors.
+func TestRedeemInviteAndCreateSessionClassification(t *testing.T) {
+	ctx := context.Background()
+	s := newAuthTestStore(t)
+	if err := s.CreateTenant(ctx, &Tenant{ID: "t1", Handle: "alice.example.com", DIDMethod: "web"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.CreateUser(ctx, &User{ID: "u1", TenantID: "t1", Handle: "alice"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Used: redeem once, then redeem again.
+	hash := "classhash"
+	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "inv1", TokenHash: hash, UserID: "u1", ExpiresAt: time.Now().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RedeemInviteAndCreateSession(ctx, hash, "tokhash", time.Hour, "", ""); err != nil {
+		t.Fatalf("first redeem: %v", err)
+	}
+	if _, err := s.RedeemInviteAndCreateSession(ctx, hash, "tokhash2", time.Hour, "", ""); !errors.Is(err, ErrInviteUsed) {
+		t.Fatalf("used invite = %v, want ErrInviteUsed", err)
+	}
+
+	// Expired: expires_at in the past.
+	hash2 := "classhash2"
+	if err := s.CreateInviteToken(ctx, &InviteToken{ID: "inv2", TokenHash: hash2, UserID: "u1", ExpiresAt: time.Now().Add(-time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.RedeemInviteAndCreateSession(ctx, hash2, "tokhash3", time.Hour, "", ""); !errors.Is(err, ErrInviteExpired) {
+		t.Fatalf("expired invite = %v, want ErrInviteExpired", err)
+	}
+
+	// Invalid: unknown token hash.
+	if _, err := s.RedeemInviteAndCreateSession(ctx, "nohash", "tokhash4", time.Hour, "", ""); !errors.Is(err, ErrInviteInvalid) {
+		t.Fatalf("unknown invite = %v, want ErrInviteInvalid", err)
+	}
+}
+
 // TestInviteTokenErrorClassification verifies used/expired/not-found map to
 // distinct classified errors.
 func TestInviteTokenErrorClassification(t *testing.T) {

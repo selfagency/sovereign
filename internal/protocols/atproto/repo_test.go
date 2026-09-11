@@ -64,6 +64,15 @@ func TestRepoCommitSigning(t *testing.T) {
 	if err := r.VerifyCommit(pub); err != nil {
 		t.Fatalf("VerifyCommit: %v", err)
 	}
+
+	// GetRecordBytes reads the record back (raw bytes, no decode).
+	_, data, err := r.GetRecordBytes(ctx, "app.bsky.feed.post/"+tid)
+	if err != nil {
+		t.Fatalf("GetRecordBytes: %v", err)
+	}
+	if len(data) == 0 {
+		t.Fatal("GetRecordBytes returned empty data")
+	}
 }
 
 // TestRepoVerifyCommitWrongKey verifies a wrong key fails verification.
@@ -86,6 +95,26 @@ func TestRepoVerifyCommitWrongKey(t *testing.T) {
 	otherPub, _ := other.PublicKey()
 	if err := r.VerifyCommit(otherPub); err == nil {
 		t.Fatal("expected verification failure with wrong key")
+	}
+}
+
+// TestRepoWriteCAREmptyRepo verifies WriteCAR errors on an uncommitted repo
+// (no root). The full CAR export path (decode of committed blocks) is covered
+// by Step 7 of the steps5-8-hardening plan, which replaces the byte-string
+// record encoding with proper DAG-CBOR (A6).
+func TestRepoWriteCAREmptyRepo(t *testing.T) {
+	ctx := context.Background()
+	sk, err := atcrypto.GeneratePrivateKeyP256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewRepo(ctx, "did:plc:abc123", sk, filepath.Join(t.TempDir(), "repo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+	if err := r.WriteCAR(ctx, io.Discard); err == nil {
+		t.Fatal("WriteCAR on empty repo succeeded, want error")
 	}
 }
 

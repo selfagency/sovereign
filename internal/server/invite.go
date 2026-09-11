@@ -55,7 +55,7 @@ func inviteHandler(st *store.Store, key *rsa.PrivateKey, issuer, audience string
 		// Mint a short-lived session access token for the invited user.
 		tok, err := auth.MintAccessToken(key, it.UserID, []string{"self"}, sessionTTL, issuer, audience)
 		if err != nil {
-			http.Error(w, "mint session: "+err.Error(), http.StatusInternalServerError)
+			internalError(w, "invite: mint session", err)
 			return
 		}
 		// The identity host is always served over HTTPS, so the session cookie

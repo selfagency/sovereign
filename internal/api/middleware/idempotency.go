@@ -33,12 +33,19 @@ type storedResponse struct {
 // A replay with the same key returns the original response (up to the
 // retention window) instead of re-executing the handler. Missing key on a
 // declared route → 400. In-memory TTL map for Phase 1; persistence is Phase 3.
+// Concurrent requests with the same key are serialized: the first claims the
+// key (in-progress marker), the rest wait and replay its stored response, so
+// the side effect runs exactly once (audit C1).
 type Idempotency struct {
 	mu    sync.Mutex
 	store map[string]*storedResponse
-	stop  chan struct{}
-	once  sync.Once
-	now   func() time.Time // test hook
+	// inflight marks keys whose handler is currently executing. A concurrent
+	// request for the same key waits on the channel, then replays the winner's
+	// stored response instead of re-executing.
+	inflight map[string]chan struct{}
+	stop     chan struct{}
+	once     sync.Once
+	now      func() time.Time // test hook
 	// RequireKey reports whether the route requires an Idempotency-Key.
 	RequireKey func(path string) bool
 }
@@ -48,6 +55,7 @@ type Idempotency struct {
 func NewIdempotency(requireKey func(path string) bool) *Idempotency {
 	id := &Idempotency{
 		store:      make(map[string]*storedResponse),
+		inflight:   make(map[string]chan struct{}),
 		stop:       make(chan struct{}),
 		now:        time.Now,
 		RequireKey: requireKey,
@@ -73,9 +81,28 @@ func (id *Idempotency) Middleware(next http.Handler) http.Handler {
 		}
 
 		hash := idempotencyHash(key, r)
+
+		// Replay a stored response first (fast path).
 		if stored := id.lookup(hash); stored != nil {
 			replay(w, stored)
 			return
+		}
+
+		// Claim the key: if a request for it is already executing, wait for
+		// the winner and replay its stored response (exactly-once under
+		// concurrency, audit C1). Loop so a waiter whose winner's entry
+		// expired re-claims and executes itself.
+		for {
+			wait := id.claim(hash)
+			if wait == nil {
+				break // we hold the claim
+			}
+			<-wait
+			if stored := id.lookup(hash); stored != nil {
+				replay(w, stored)
+				return
+			}
+			// Winner's entry expired or was pruned; loop and re-claim.
 		}
 
 		buf := &bytes.Buffer{}
@@ -89,11 +116,40 @@ func (id *Idempotency) Middleware(next http.Handler) http.Handler {
 			expires: id.now().Add(idempotencyRetention),
 		}
 		id.record(hash, stored)
+		id.release(hash)
 
-		copyHeaders(w.Header(), rec.Header())
+		// Headers were already forwarded to the real writer by bufferWriter;
+		// do not copy them again (audit C1 — double header copy).
 		w.WriteHeader(rec.status)
 		_, _ = w.Write(buf.Bytes())
 	})
+}
+
+// claim marks hash as in-progress. It returns a channel to wait on if another
+// request already holds the claim, or nil if this request won the claim (or
+// the key is already stored and replayable).
+func (id *Idempotency) claim(hash string) chan struct{} {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	if _, ok := id.store[hash]; ok {
+		return nil // already stored; caller replays via lookup
+	}
+	if wait, ok := id.inflight[hash]; ok {
+		return wait // someone else is executing; wait for them
+	}
+	ch := make(chan struct{})
+	id.inflight[hash] = ch
+	return nil // we won the claim
+}
+
+// release clears the in-progress marker for hash.
+func (id *Idempotency) release(hash string) {
+	id.mu.Lock()
+	defer id.mu.Unlock()
+	if ch, ok := id.inflight[hash]; ok {
+		close(ch)
+		delete(id.inflight, hash)
+	}
 }
 
 // lookup returns a non-expired stored response for hash, or nil.
