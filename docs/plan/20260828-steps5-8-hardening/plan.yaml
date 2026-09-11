@@ -466,7 +466,7 @@ tasks:
     description: "A4: atproto PDS wired with nil Backend/RepoFactory/SigningKey -> 6/8 XRPC methods broken. Wire backendFor, per-tenant RepoFactory under DataDir, SigningKey. A5: fix blob tenant prefix (was deferred from Step 2). A6: records capped at 255 bytes (fixed 0x58 CBOR header) — encode as proper DAG-CBOR maps via indigo/ipld-go-ipld-prime. A7: getProfile never resolves DIDs — add GetTenantByDID or delete branch + reject DID input."
     wave: 3
     agent: gem-implementer
-    status: pending
+    status: completed
     covers: [A4, A5, A6, A7, C1]
     dependencies: [T4]
     conflicts_with: [T5, T7, T8, T9, T10, T11]
