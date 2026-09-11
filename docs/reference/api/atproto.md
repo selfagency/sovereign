@@ -8,10 +8,15 @@ weight: 30
 A **small subset** of atproto XRPC reads, served from the tenant store.
 Verified against `internal/protocols/atproto/xrpc_server.go`.
 
-> **Status: Shipped.** The PDS surface is mounted: `resolveHandle`, `getProfile`,
-> `createRecord`, `getRecord`, `uploadBlob`, `sync.getBlob`, `sync.getRepo`,
-> and passkey-authenticated `createSession`. The repo/commit-signing and blob
-> machinery is wired to live endpoints.
+> **Status: Partial.** The public reads (`resolveHandle`, `getProfile`) are
+> live. The data-plane methods (`createRecord`, `getRecord`, `uploadBlob`,
+> `sync.getBlob`, `sync.getRepo`, `createSession`) are **disabled** at the
+> router and return `501 MethodNotImplemented`: the PDS is mounted with nil
+> Backend/RepoFactory/SigningKey, and wiring them without an authn+scope+
+> tenant gate would expose unauthenticated cross-tenant writes and unbounded
+> uploads (security audit A1-A4). They will be enabled by Step 7 of the
+> steps5-8-hardening plan, wired WITH authentication, scope checks, tenant
+> binding, and a body cap.
 
 ## Base URL
 
@@ -63,6 +68,8 @@ Responses:
 
 ### `com.atproto.repo.createRecord`
 
+> **Disabled** — returns `501 MethodNotImplemented` (see status above).
+
 Write a record to the repo and commit it.
 
 ```http
@@ -73,10 +80,11 @@ Body: `{"repo":"<did>","collection":"<nsid>","record":{…}}`
 
 | Status | Body | When |
 |:-------|:-----|:------|
-| `200` | `{"uri","cid","commit"}` | Record written and committed. |
-| `400` | `InvalidRequest`/`InvalidRecord` | Bad body or record. |
+| `501` | `MethodNotImplemented` | Always (data plane disabled). |
 
 ### `com.atproto.repo.getRecord`
+
+> **Disabled** — returns `501 MethodNotImplemented` (see status above).
 
 Read a record back from the repo.
 
@@ -86,10 +94,11 @@ GET /xrpc/com.atproto.repo.getRecord?repo=<did>&collection=<nsid>&rkey=<rkey>
 
 | Status | Body | When |
 |:-------|:-----|:------|
-| `200` | `{"uri","value"}` | Record found. |
-| `404` | `RecordNotFound` | No such record. |
+| `501` | `MethodNotImplemented` | Always (data plane disabled). |
 
 ### `com.atproto.repo.uploadBlob`
+
+> **Disabled** — returns `501 MethodNotImplemented` (see status above).
 
 Store a blob (content-addressed by SHA-256).
 
@@ -99,9 +108,11 @@ POST /xrpc/com.atproto.repo.uploadBlob
 
 | Status | Body | When |
 |:-------|:-----|:------|
-| `200` | `{"blob":{"ref":{"$link":"<cid>"},"mimeType","size"}}` | Blob stored. |
+| `501` | `MethodNotImplemented` | Always (data plane disabled). |
 
 ### `com.atproto.sync.getBlob`
+
+> **Disabled** — returns `501 MethodNotImplemented` (see status above).
 
 Fetch a stored blob by CID.
 
@@ -111,10 +122,11 @@ GET /xrpc/com.atproto.sync.getBlob?did=<did>&cid=<cid>
 
 | Status | Body | When |
 |:-------|:-----|:------|
-| `200` | blob bytes | Blob found. |
-| `404` | `BlobNotFound` | No such blob. |
+| `501` | `MethodNotImplemented` | Always (data plane disabled). |
 
 ### `com.atproto.sync.getRepo`
+
+> **Disabled** — returns `501 MethodNotImplemented` (see status above).
 
 Export the repo as a CAR (v1).
 
@@ -124,10 +136,11 @@ GET /xrpc/com.atproto.sync.getRepo?did=<did>
 
 | Status | Body | When |
 |:-------|:-----|:------|
-| `200` | CAR bytes | Repo exported. |
-| `404` | `RepoNotFound` | No repo for the DID. |
+| `501` | `MethodNotImplemented` | Always (data plane disabled). |
 
 ### `com.atproto.server.createSession`
+
+> **Disabled** — returns `501 MethodNotImplemented` (see status above).
 
 Mint an atproto session from a passkey-authenticated access token.
 
@@ -139,5 +152,4 @@ Body: `{"accessJwt":"<validated access token>"}`
 
 | Status | Body | When |
 |:-------|:-----|:------|
-| `200` | `{"accessJwt","refreshJwt","did","handle"}` | Session minted. |
-| `401` | `AuthenticationRequired` | Invalid access token. |
+| `501` | `MethodNotImplemented` | Always (data plane disabled). |

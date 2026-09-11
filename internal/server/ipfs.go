@@ -33,12 +33,12 @@ func (b *ipfsBroker) pin(w http.ResponseWriter, r *http.Request) {
 	}
 	if b.backend != nil {
 		if err := b.backend.Pin(r.Context(), mustCID(cidStr)); err != nil {
-			http.Error(w, "pin failed: "+err.Error(), http.StatusInternalServerError)
+			internalError(w, "ipfs: backend pin", err)
 			return
 		}
 	}
 	if err := b.store.AddIPFSPin(r.Context(), cidStr, "pinned"); err != nil {
-		http.Error(w, "store pin: "+err.Error(), http.StatusInternalServerError)
+		internalError(w, "ipfs: store pin", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"cid": cidStr, "status": "pinned"})
