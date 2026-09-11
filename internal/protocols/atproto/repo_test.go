@@ -1,9 +1,11 @@
 package atproto
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/bluesky-social/indigo/atproto/atcrypto"
@@ -22,6 +24,49 @@ func (r *testRecord) MarshalCBOR(w io.Writer) error {
 	}
 	_, err = w.Write([]byte(r.Text))
 	return err
+}
+
+// TestJSONRecordLargeRoundTrip verifies a record larger than 255 bytes
+// round-trips through the repo (A6: proper DAG-CBOR map encoding, not the
+// old byte-string wrapper capped at 255 bytes).
+func TestJSONRecordLargeRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	sk, err := atcrypto.GeneratePrivateKeyP256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewRepo(ctx, "did:plc:abc123", sk, filepath.Join(t.TempDir(), "repo.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = r.Close() }()
+
+	// A record whose JSON body exceeds 255 bytes (the old byte-string cap).
+	big := strings.Repeat("x", 400)
+	raw := []byte(`{"text":"` + big + `"}`)
+	cid, tid, err := r.CreateRecord(ctx, "app.bsky.feed.post", &jsonRecord{data: raw})
+	if err != nil {
+		t.Fatalf("CreateRecord with >255-byte record: %v", err)
+	}
+	if cid == "" || tid == "" {
+		t.Fatal("empty cid/tid")
+	}
+	if _, _, err := r.Commit(ctx); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Read it back and unwrap the DAG-CBOR map to the original JSON.
+	_, data, err := r.GetRecordBytes(ctx, "app.bsky.feed.post/"+tid)
+	if err != nil {
+		t.Fatalf("GetRecordBytes: %v", err)
+	}
+	got, err := unwrapRecord(data)
+	if err != nil {
+		t.Fatalf("unwrapRecord: %v", err)
+	}
+	if !bytes.Equal(got, raw) {
+		t.Fatalf("record mismatch:\n got %s\nwant %s", got, raw)
+	}
 }
 
 // TestRepoCommitSigning verifies repo creation, record write, and commit signing.

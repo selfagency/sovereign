@@ -67,3 +67,10 @@ api:
 
 # Allow anyone to self-register an account. Defaults to false (invite-only).
 # open_registrations: false
+
+# atproto PDS data plane. When enabled, the /xrpc/* repo-write and blob
+# endpoints are served (authenticated via bearer access tokens carrying the
+# atproto scope, tenant-bound). Defaults to false: only the public reads
+# (resolveHandle, getProfile) are served and data-plane methods return 501.
+# atproto:
+#   enabled: false

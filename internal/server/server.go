@@ -10,7 +10,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
+
+	"github.com/bluesky-social/indigo/atproto/atcrypto"
 
 	"github.com/selfagency/sovereign/internal/api"
 	"github.com/selfagency/sovereign/internal/api/dto"
@@ -266,8 +269,27 @@ func (s *Server) buildRouter() error {
 	s.ipfsBackend = ipfsBackend
 	ipfsBroker := newIPFSBroker(s.store, ipfsBackend)
 
-	// atproto PDS.
-	xrpc := &atproto.XRPCServer{Store: s.store, Issuer: issuer, Audience: s.cfg.Audience}
+	// atproto PDS. The data plane (repo writes, blobs) is wired only when
+	// atproto.enabled is set; otherwise the XRPC router serves the public
+	// reads (resolveHandle, getProfile) and returns 501 for the data-plane
+	// methods (fail-closed default, security audit A1-A3).
+	xrpc := &atproto.XRPCServer{
+		Store:      s.store,
+		Issuer:     issuer,
+		Audience:   s.cfg.Audience,
+		Backend:    backendFor,
+		SigningKey: s.authStore.SigningKeyMaterial(),
+	}
+	if s.cfg.Atproto.Enabled {
+		xrpc.RepoFactory = func(ctx context.Context, did string) (*atproto.Repo, error) {
+			sk, err := atcrypto.GeneratePrivateKeyP256()
+			if err != nil {
+				return nil, fmt.Errorf("atproto: generate repo key: %w", err)
+			}
+			path := filepath.Join(s.cfg.DataDir, "atproto", strings.TrimPrefix(did, "did:")+".db")
+			return atproto.NewRepo(ctx, did, sk, path)
+		}
+	}
 	mux.Handle("/xrpc/", xrpc)
 
 	// OIDC provider, served only on the identity host.

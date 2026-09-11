@@ -9,9 +9,14 @@ import (
 	"github.com/bluesky-social/indigo/repo"
 	"github.com/ipfs/go-blockservice"
 	"github.com/ipfs/go-cid"
+	// Register the dag-cbor codec (0x71) in the ipld-prime registry so
+	// car.WriteCar can decode the repo's record blocks (A6). Without this,
+	// WriteCAR fails with "no decoder registered for multicodec code 113".
 	offline "github.com/ipfs/go-ipfs-exchange-offline"
 	"github.com/ipfs/go-merkledag"
 	car "github.com/ipld/go-car"
+	"github.com/ipld/go-ipld-prime/codec/dagcbor"
+	"github.com/ipld/go-ipld-prime/multicodec"
 
 	"github.com/selfagency/sovereign/internal/pdsstore"
 )
@@ -21,6 +26,13 @@ type Repo struct {
 	r  *repo.Repo
 	sk atcrypto.PrivateKey
 	bs *pdsstore.Blockstore
+}
+
+// init registers the dag-cbor codec (0x71) in the ipld-prime registry so
+// car.WriteCar can decode the repo's record blocks (A6).
+func init() {
+	multicodec.RegisterEncoder(uint64(0x71), dagcbor.Encode)
+	multicodec.RegisterDecoder(uint64(0x71), dagcbor.Decode)
 }
 
 // NewRepo creates a durable repo for a DID with the given signing key. The

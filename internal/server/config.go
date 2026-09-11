@@ -25,6 +25,7 @@ type Config struct {
 	OpenRegistrations bool          `yaml:"open_registrations" mapstructure:"open_registrations"`
 	Auth              AuthConfig    `yaml:"auth" mapstructure:"auth"`
 	API               APIConfig     `yaml:"api" mapstructure:"api"`
+	Atproto           AtprotoConfig `yaml:"atproto" mapstructure:"atproto"`
 }
 
 // StorageConfig configures the protocol blob backend.
@@ -40,6 +41,14 @@ type S3Config struct {
 	AccessKey string `yaml:"access_key" mapstructure:"access_key"`
 	SecretKey string `yaml:"secret_key" mapstructure:"secret_key"`
 	Region    string `yaml:"region" mapstructure:"region"`
+}
+
+// AtprotoConfig configures the atproto PDS data plane.
+type AtprotoConfig struct {
+	// Enabled turns on the atproto data plane (repo writes, blobs). When
+	// false (default), the data-plane methods return 501 and only the public
+	// reads (resolveHandle, getProfile) are served.
+	Enabled bool `yaml:"enabled" mapstructure:"enabled"`
 }
 
 // IPFSConfig configures the IPFS pinning broker.
